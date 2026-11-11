@@ -6,7 +6,7 @@
 #   dc-screenshot.sh pc [out.png] [seconds]   runs build/linux-<type>/game          (default 5s)
 #   dc-screenshot.sh dc [out.png] [seconds]   boots build/dreamcast-<type>/game.cdi in Flycast (default 15s)
 #
-# TYPE=debug picks the debug build. The program's output goes to build/screenshot-<target>.log
+# TYPE=debug picks the debug build. The program's output goes to a .log file next to the .png
 # (for dc, that includes the Dreamcast's serial console: printf / Simulant log lines).
 set -euo pipefail
 
@@ -14,7 +14,7 @@ TARGET="${1:?usage: $0 pc|dc [out.png] [seconds]}"
 PROJECT="$(pwd)"
 TYPE="${TYPE:-release}"
 OUT="$(realpath -m "${2:-$PROJECT/build/screenshot-$TARGET.png}")"
-LOG="$PROJECT/build/screenshot-$TARGET.log"
+LOG="${OUT%.png}.log"     # next to the screenshot, so every run keeps its own log
 
 case "$TARGET" in
   pc) WAIT="${3:-5}";  CMD="cd '$PROJECT/build/linux-$TYPE' && ./game" ;;
