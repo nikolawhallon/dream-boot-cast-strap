@@ -17,6 +17,7 @@ dream-boot-cast-strap/             THE KIT (this repo, cloned anywhere)
 │   ├── dc-bootstrap.sh            one time: build the Dreamcast SDK into sdk/
 │   ├── dc-build-simulant.sh       build the Simulant engine (Makefiles call it for you)
 │   ├── dc-new-project.sh          create a new project from template/
+│   ├── dc-picocad-obj.sh          prepare a picoCAD model export for Simulant (section 4)
 │   └── dc-screenshot.sh           headless screenshot of a project's game (PC or Dreamcast)
 ├── patches/                       fixes applied to KallistiOS by dc-bootstrap.sh
 ├── template/                      starter project (also runnable in place)
@@ -69,8 +70,8 @@ make run-pc               # build + run on Linux
 make run-dc               # build disc image + boot it in Flycast
 ```
 
-That's all a new project needs. You get a copy of the template: a drivable cube on a
-checkerboard with pillars. Edit `sources/` from there.
+That's all a new project needs. You get a copy of the template: one textured, unlit 3D model
+(a picoCAD warning post) spinning in front of a camera. Edit `sources/` from there.
 
 The first `make run-pc` / `make run-dc` of a given build type compiles Simulant (a few minutes).
 After that, every project reuses it.
@@ -82,13 +83,13 @@ After that, every project reuses it.
 | `make run-pc`                 | build + run on Linux                                                   |
 | `make run-dc`                 | cross-compile, make `game.cdi`, boot it in Flycast                     |
 | `make pc` / `make dc` / `make cdi` | build only                                                        |
-| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a log          |
+| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it |
 | `make clean`                  | delete `build/`                                                        |
 | `make TYPE=Debug ...`         | debug build: assertions, debug log, symbols (see section 7)            |
 | `make cdi PAD=1`              | padded disc (~700 MB): faster loading on real hardware                 |
 
-Controls in the template: WASD or arrows (Linux), stick or d-pad (Dreamcast). Enter or Start quits.
-In Flycast, map your keyboard or gamepad in its settings (Tab opens the menu).
+In the template, Enter (Linux) or Start (Dreamcast) quits. In Flycast, map your keyboard or
+gamepad in its settings (Tab opens the menu).
 
 ---
 
@@ -186,14 +187,15 @@ so the game's `printf` and log output end up in `build/screenshot-dc.log`.
 | File | Purpose | Edit it? |
 |---|---|---|
 | `sources/main.cpp` | `main()`: `AppConfig` (title, resolution, renderer, search paths), the `Application` subclass that registers scenes | Rarely: new scenes, config |
-| `sources/game_scene.{h,cpp}` | The template's game scene | Yes, this is the game |
-| `assets/` | Your files. Load them as `"assets/..."` (or just the relative name) | Yes |
+| `sources/game_scene.{h,cpp}` | The template's scene: loads `warning.obj`, makes it unlit, spins it | Yes, this is the game |
+| `assets/` | Your files (the template has `warning.obj/.mtl` + `warning_tex.png`). Load them by relative name | Yes |
 | `CMakeLists.txt` | Compile/link rules for both targets. Every `.cpp`/`.c` under `sources/` is included automatically | Only to add libraries/flags |
 | `Makefile` | `make` targets, `TITLE` (disc name) | Change `TITLE` |
 | `shell.nix` | Imports the kit's shell | No |
 
 Rebuilding after adding a source file needs nothing special, because the file glob is
-re-checked on every build.
+re-checked on every build. Assets are copied on every build too, so changing only an asset still
+reaches the build and the disc.
 
 ---
 
@@ -211,23 +213,53 @@ The template's sources are commented and are the best place to start. The concep
   `Camera3D`/`Camera2D`, `DirectionalLight`/`PointLight`, `Skybox`, UI widgets, physics bodies...
   Each has a `transform` (position/orientation/scale; `look_at()`), and nodes can be parented.
   `Params().set("key", value)` passes construction arguments.
+  Cameras must be `Camera3D` or `Camera2D`: `create_child<Camera>()` crashes.
 - **Layers**: nothing is drawn until you call `compositor->create_layer(subtree, camera)`:
   "draw this subtree, from this camera, into this viewport". Several layers can stack, for
   example a 3D world plus a 2D HUD with its own `Camera2D`.
+  **Layers are activated together with the scene.** A layer you create later (when a level or
+  match starts) stays inactive and draws nothing until you call `layer->activate()`.
 - **Assets**: meshes, materials, textures, sounds, fonts.
   - `assets->...` belongs to the scene and is freed with it. `app->shared_assets->...` lives for the whole program.
   - Load files with `load_texture("assets/x.png")` or `load_mesh("assets/x.obj")`.
     Loaders exist for OBJ, glTF, MD2, Q2 BSP, PNG, JPG, TGA, PCX and more.
-  - Build geometry in code with `mesh->create_submesh_as_box/cube/sphere/...`.
+  - Build geometry in code with `mesh->create_submesh_as_box/cube/sphere/...`, or vertex by
+    vertex (`vertex_data->position(...)`, `tex_coord0(...)`, `color(...)`, `move_next()`, then
+    `done()`). Set the colour of every vertex: the default vertex format has a colour that
+    multiplies the texture, and it starts as black with zero alpha (invisible).
+  - A mesh you rebuild in place keeps its old bounding box, so its actor can be culled away by
+    mistake. For things that are always on screen (a HUD), use `actor->set_cullable(false)`.
 - **Materials**: how a surface looks. Start with `assets->clone_default_material()`, then
   `set_base_color`, `set_base_color_map(texture)`, `set_lighting_enabled`, `set_blend_func`...
+  Loaded models come with their own materials (`for(auto& sm: mesh->each_submesh())
+  sm->material()->...`, as in the template).
 - **Input**: named axes that combine keyboard, mouse and controllers.
   - Built-in axes: `"Horizontal"`, `"Vertical"`, `"Fire1"`, `"Fire2"`, `"Start"`, `"MouseX"`, `"MouseY"`.
   - Read them with `input->axis_value("Horizontal")` (-1..1) or `axis_was_pressed("Fire1")`.
-  - Define your own with `input->new_axis(...)`.
+  - Define your own with `input->new_axis(...)`; `set_joystick_source(GameControllerIndex(n))`
+    binds an axis to one controller (for multiplayer).
+  - Stick Y: on the Dreamcast, Simulant reports "up" as +1 (its KOS backend flips the axis);
+    on PC through SDL, "up" is −1. (Read from the engine's code; not yet checked on hardware.)
 - **Logging**: `S_INFO("x = {0}", x)`, `S_DEBUG`, `S_WARN`, `S_ERROR`. On Dreamcast, log lines
   and `printf` go to the serial console.
 - **Per-platform code**: `#ifdef __DREAMCAST__`, or at runtime `get_platform()->name() == "dreamcast"`.
+
+### Models from picoCAD
+
+picoCAD's OBJ export needs three fixes before Simulant draws it correctly and quickly.
+`dc-picocad-obj.sh <model.obj> <project>/assets` copies the `.obj`, its `.mtl` and texture, and
+fixes them:
+
+1. **MTL keys are lowercase** (`map_kd`, `kd`, ...). Simulant's MTL parser is case-sensitive, so
+   the model loads untextured. The script writes `map_Kd`, `Kd`, and so on.
+2. **`tr 1.0`** means "fully transparent" to Simulant, so it turns on alpha blending for every
+   material (slow on the Dreamcast). The script drops the line. (Setting
+   `MeshLoadOptions::blending_enabled = false` doesn't help: the OBJ loader ignores it.)
+3. **Faces are quads and other polygons.** Simulant's OBJ loader draws each non-triangle face
+   as its own draw call, which is very slow. The script splits every face into triangles.
+
+The template's `assets/warning.obj` was made this way. Texture coordinates follow the OBJ
+convention (v = 0 at the bottom of the image), which is also what Simulant uses for textures.
 
 Where to learn more:
 - `sdk/simulant/documentation/`: the engine's guides (start with `getting-started/`, `scene.md`, `stage_nodes.md`).
@@ -245,13 +277,87 @@ Develop on PC, but **check the Dreamcast build often**, because the console is f
 |---|---|---|
 | CPU | SH-4 at 200 MHz, fast single-precision FPU | Use `float` everywhere. `double` is emulated in software and very slow. Avoid heavy per-frame allocation. |
 | RAM | 16 MB main (your program + data), 8 MB video, 2 MB sound | The whole `.elf` is loaded into RAM. Watch texture sizes. |
-| GPU | PowerVR2, fixed function, no shaders, per-vertex lighting | Small power-of-two textures (≤256×256 is a good default). Keep polygons modest in size: huge ones clip badly and light poorly. A few thousand polygons per frame is comfortable. |
+| GPU | PowerVR2, fixed function, no shaders, per-vertex lighting | Small power-of-two textures (≤256×256 is a good default). Keep polygons modest in size: huge ones clip badly and light poorly. The GPU itself handles millions of polygons per second; the CPU work around them is the limit (see below). |
 | Video | 640×480 | The template uses the same resolution on PC. |
 | Input | Controller: analog stick, d-pad, A/B/X/Y, analog L/R triggers, Start | Design for it. The keyboard is the PC stand-in. |
 | Disc | CD read speed | Load assets in `on_load()`, not mid-game. |
 
 Fixed-function lighting is computed differently by desktop GL and GLdc, so the two builds can
 differ a bit in brightness. **The Dreamcast build is the reference.**
+
+### What things cost
+
+Measured in Flycast while porting a 4-player split-screen game to this kit (relative numbers
+are reliable; absolute ones still need checking on real hardware):
+
+| Thing | Cost per frame |
+|---|---|
+| An empty layer | ~0.02 ms |
+| Simulant, per draw call (each actor/submesh, in each layer it's drawn in) | ~35 µs |
+| Simulant UI widgets (labels, images) | several draw calls each: four HUDs of ~44 widgets took ~30 ms |
+| GLdc, per triangle | ~2.2 µs (≈ 450 CPU cycles) |
+| One view of ~6,200 textured triangles through Simulant + GLdc | ~19 ms |
+| KallistiOS's bare PowerVR benchmark (`kos/examples/dreamcast/pvr/pvrmark_strips_direct`) | 3.6M+ polygons/s |
+| A hand-written PowerVR renderer (transform, clip, cull, submit; see below) | ~94 cycles per vertex (~2M vertices/s) |
+
+What that means in practice:
+
+- **Draw calls are expensive.** Merge small things into one mesh. A HUD built from many UI
+  widgets can cost more than the whole 3D world; build it as one mesh of quads from one
+  texture atlas instead (text included, with the font baked into the atlas).
+- **Split screen multiplies everything:** every view draws its whole scene again.
+- **GLdc is fine for modest scenes** (a few thousand triangles at 60 fps). Beyond that, the
+  per-triangle cost dominates.
+- **The GPU is rarely the limit.** The PowerVR draws screen-space triangles (texturing, depth,
+  blending) in hardware, but it does no vertex transformation. Projection, clipping and culling
+  run on the SH-4, and that's where the time goes.
+
+### Going around GLdc for the heavy part
+
+For scenes too big for GLdc, a game can draw its 3D world straight to the PowerVR through
+KallistiOS's `pvr_*` API and keep Simulant for everything else (input, assets, scene graph,
+main loop). Simulant still calls GLdc's `glKosSwapBuffers()` every frame, and GLdc still opens
+and closes the PowerVR frame there; the game adds its polygons to that frame. What we learned
+doing that:
+
+- **Hook in with the linker.** Link with `-Wl,--wrap=pvr_scene_begin -Wl,--wrap=pvr_list_begin
+  -Wl,--wrap=pvr_scene_finish`: GLdc's calls to those KallistiOS functions then go to your
+  `__wrap_pvr_list_begin()` etc., which call the originals (`__real_...`) and draw your polygons
+  into the list that's open.
+- **Wrap KallistiOS functions, not GLdc's.** Simulant (GLdc included) is built with link-time
+  optimisation, so calls between GLdc's own functions never reach the linker as symbols and
+  `--wrap` can't redirect them. Calls from GLdc into KallistiOS can be.
+- **Open each list type at most once per frame.** If GLdc opens the opaque list after you
+  already did, everything still works, but it cost ~8.5 ms per frame in testing, and
+  KallistiOS only warns about it in debug builds. Draw into GLdc's list when it opens one, and
+  open the lists GLdc skips yourself (it skips all of them if Simulant draws nothing).
+- **Textures:** load them through Simulant as usual. GLdc uploads them to video memory, and
+  `_glGetBoundTexture()` (a GLdc internal: `sdk/simulant/deps/libgl/GL/private.h`) gives the
+  address, size and PowerVR format for a `pvr_poly_cxt_txr()` header. Uploads happen lazily, so
+  build headers on first draw, not right after loading.
+- **Per triangle:** transform with the SH-4's matrix instruction (`mat_load`/`mat_apply`, then
+  `mat_trans_nodiv`), reject what's outside the view, clip only what crosses the near plane or a
+  view's edge (that also keeps split-screen views apart), cull back faces on the CPU, and write
+  vertices through the store queues (`pvr_dr_init`, `pvr_dr_target`, `pvr_dr_commit`). Merge
+  duplicate vertices first (Simulant's OBJ loader stores every corner separately) and send
+  quads as 4-vertex strips.
+
+The kit doesn't ship such a renderer (yet); this is the recipe.
+
+### Measuring
+
+- `make shot-dc` keeps the Dreamcast's serial output (`printf`, `S_INFO`) in a log next to the
+  screenshot. `dc-screenshot.sh dc build/x.png 30` takes it later in the run, with its own log.
+- `timer_us_gettime64()` (KallistiOS, microseconds) times anything; `app->stats` has the frame
+  rate and frame time; `app->ram_usage_in_bytes()` the memory use; `pvr_get_stats()` the GPU's
+  own timings.
+- To see where a frame goes, wrap the KallistiOS functions GLdc calls during its swap
+  (`pvr_wait_ready`, `pvr_scene_begin`, `pvr_list_begin`/`pvr_list_finish`,
+  `pvr_scene_finish`) with `--wrap`, timestamp each, and compare with a timestamp from your
+  scene's `on_update()`. That splits a frame into Simulant's work, waiting for the GPU, drawing,
+  and GLdc's lists.
+- A debug mode that starts the game with bots (no controller needed) lets headless runs
+  measure real gameplay. Make sure the bots play like people (e.g. "fire" is a press, not held).
 
 ---
 
@@ -310,8 +416,15 @@ Problems found while setting this up, and how the kit handles them:
    explicitly, inside a `--start-group`/`--end-group`.
 8. **Use `.cdi`, not `.gdi`, with Flycast's reios.** With `.gdi`, KOS mounts the small placeholder
    track and can't see the game files.
-9. **Big polygons on the Dreamcast.** A single 60×60 floor box rendered badly, so the template's
-   floor is made of tiles.
+9. **Big polygons on the Dreamcast.** A single 60×60 floor box rendered badly. Build large
+   surfaces from tiles (e.g. a 10×10 grid).
+10. **Assets were only copied when the code relinked**, so a change to an asset alone never
+    reached the build or the disc. The template's `CMakeLists.txt` now copies them in a
+    `copy_assets` target that runs on every build.
+11. **picoCAD models** load untextured, alpha-blended and slow without fixes; see
+    `dc-picocad-obj.sh` (section 4).
+12. **`dc-screenshot.sh` wrote every run's log to the same file**, so a second run silently
+    replaced the first one's output. The log now sits next to the screenshot, with the same name.
 
 ### Updating a component
 
@@ -337,6 +450,11 @@ those libraries by itself.
 | PC: things render black | Make sure `force_renderer = "gl1x"` is still set, or give materials a texture. |
 | Changes in KOS/Simulant not picked up | `make clean` |
 | Want to see what the Dreamcast build prints | `make shot-dc`, then read `build/screenshot-dc.log` |
+| A model shows up untextured (white or grey) | Lowercase MTL keys (picoCAD): run it through `dc-picocad-obj.sh`. |
+| A layer draws nothing (screen stays black) | It was created after the scene activated: call `layer->activate()`. |
+| A mesh built in code is invisible | Set every vertex's colour (`vertex_data->color(...)`); for meshes rebuilt in place, also `set_cullable(false)`. |
+| Crash when creating a camera | Use `Camera3D` or `Camera2D`, not `Camera`. |
+| Dreamcast: slow with many objects or split screen | Section 5, "What things cost": fewer draw calls, triangulated models, one-mesh HUDs. |
 | Linker errors about `pthread_*` or KOS symbols | Keep the link group in `CMakeLists.txt` intact. |
 
 Start over completely: delete `sdk/`, then run `dc-bootstrap.sh` again. That takes 20-40 minutes plus the Simulant builds.
