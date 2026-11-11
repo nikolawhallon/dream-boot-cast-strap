@@ -3,22 +3,23 @@
 using namespace smlt;
 
 void GameScene::on_load() {
-    // --- Camera + layer -------------------------------------------------------------------
-    // A camera is a node in the scene. A *layer* (created by the compositor) is what actually
-    // gets drawn: "render this part of the scene graph, seen from this camera, into a viewport".
-    // No layer = nothing on screen.
+    // --- What to draw ---------------------------------------------------------------------
+    // The kit's renderer (dbcs, see the kit README) draws VIEWS: "this world, seen from this
+    // camera, in this part of the screen, over this background". On Linux it uses Simulant's
+    // own renderer; on the Dreamcast it draws straight to the PowerVR, which is much faster.
+    // Your code is the same for both.
     //
-    // Layers are activated when the scene is. A layer you create LATER (say, when a level
-    // starts) is inactive and draws nothing until you call layer->activate().
+    // A world is just a node: every Actor directly under it gets drawn.
+    renderer_.reset(new dbcs::Renderer(this));
+    auto world = create_child<Stage>();
+
     auto camera = create_child<Camera3D>();
-    camera->set_perspective_projection(
-        Degrees(60.0f), float(window->width()) / float(window->height()), 0.5f, 100.0f);
+    camera->set_perspective_projection(Degrees(60.0f), renderer_->aspect_ratio(Viewport()), 0.5f, 100.0f);
     camera->transform->set_position(Vec3(0, 3, 10));
     camera->transform->look_at(Vec3(0, 2, 0));
 
-    auto layer = compositor->create_layer(this, camera);
-    layer->viewport->set_color(Color(0.11f, 0.17f, 0.33f, 1.0f));   // background
-    layer->set_clear_flags(BUFFER_CLEAR_ALL);
+    // Viewport() = the whole screen. Background: one colour (several = a vertical gradient).
+    renderer_->add_view(world, camera, Viewport(), {Color(0.11f, 0.17f, 0.33f, 1.0f)});
 
     // --- The model ------------------------------------------------------------------------
     // A Mesh is geometry plus materials. It's an *asset*: loaded once, shared. An Actor is a
@@ -32,12 +33,13 @@ void GameScene::on_load() {
     auto mesh = assets->load_mesh("warning.obj", VertexSpecification::DEFAULT, options);
 
     // No lighting: each pixel is just its texture colour. Opaque: no blending.
+    // (On the Dreamcast the renderer is always unlit and opaque; this makes Linux match.)
     for(auto& submesh: mesh->each_submesh()) {
         submesh->material()->set_lighting_enabled(false);
         submesh->material()->set_blend_func(BLEND_NONE);
     }
 
-    model_ = create_child<Actor>(mesh);
+    model_ = world->create_child<Actor>(mesh);
 }
 
 void GameScene::on_update(float dt) {

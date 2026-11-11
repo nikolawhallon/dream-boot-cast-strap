@@ -19,6 +19,7 @@ dream-boot-cast-strap/             THE KIT (this repo, cloned anywhere)
 │   ├── dc-new-project.sh          create a new project from template/
 │   ├── dc-picocad-obj.sh          prepare a picoCAD model export for Simulant (section 4)
 │   └── dc-screenshot.sh           headless screenshot of a project's game (PC or Dreamcast)
+├── lib/dbcs/                      the kit's renderer: one drawing API, fast on the Dreamcast (section 4)
 ├── patches/                       fixes applied to KallistiOS by dc-bootstrap.sh
 ├── template/                      starter project (also runnable in place)
 └── sdk/                           generated, 1-2 GB (more with Debug builds), never edit by hand
@@ -187,9 +188,9 @@ so the game's `printf` and log output end up in `build/screenshot-dc.log`.
 | File | Purpose | Edit it? |
 |---|---|---|
 | `sources/main.cpp` | `main()`: `AppConfig` (title, resolution, renderer, search paths), the `Application` subclass that registers scenes | Rarely: new scenes, config |
-| `sources/game_scene.{h,cpp}` | The template's scene: loads `warning.obj`, makes it unlit, spins it | Yes, this is the game |
+| `sources/game_scene.{h,cpp}` | The template's scene: one `dbcs::Renderer` view, loads `warning.obj`, spins it | Yes, this is the game |
 | `assets/` | Your files (the template has `warning.obj/.mtl` + `warning_tex.png`). Load them by relative name | Yes |
-| `CMakeLists.txt` | Compile/link rules for both targets. Every `.cpp`/`.c` under `sources/` is included automatically | Only to add libraries/flags |
+| `CMakeLists.txt` | Compile/link rules for both targets. Every `.cpp`/`.c` under `sources/` is included automatically; `dbcs_use(game)` adds the kit's renderer | Only to add libraries/flags |
 | `Makefile` | `make` targets, `TITLE` (disc name) | Change `TITLE` |
 | `shell.nix` | Imports the kit's shell | No |
 
@@ -243,6 +244,51 @@ The template's sources are commented and are the best place to start. The concep
 - **Logging**: `S_INFO("x = {0}", x)`, `S_DEBUG`, `S_WARN`, `S_ERROR`. On Dreamcast, log lines
   and `printf` go to the serial console.
 - **Per-platform code**: `#ifdef __DREAMCAST__`, or at runtime `get_platform()->name() == "dreamcast"`.
+
+### The dbcs renderer
+
+`lib/dbcs` is the kit's own renderer, used by the template. You describe what's on screen and
+it draws it, with the same game code for both builds:
+
+- **Linux:** with Simulant's compositor layers, like any Simulant game.
+- **Dreamcast:** straight to the PowerVR, bypassing Simulant's renderer and GLdc. It's several
+  times faster: a 4-player split-screen game went from 4–11 fps through Simulant to ~50 fps
+  (see section 5).
+
+```cpp
+#include "dbcs/renderer.h"
+
+// in on_load():
+renderer_.reset(new dbcs::Renderer(this));          // one per scene, kept for its lifetime
+auto world = create_child<Stage>();                  // Actors directly under it get drawn
+camera->set_perspective_projection(Degrees(60), renderer_->aspect_ratio(viewport), 0.5f, 100.0f);
+renderer_->add_view(world, camera, viewport, {Color::black()});   // background: 1 colour, or
+                                                                   // several for a gradient
+// a HUD: textured quads over a viewport, alpha-blended, on top of everything
+dbcs::Overlay* hud = renderer_->add_overlay(viewport, atlas_texture);
+hud->clear();
+hud->add({x, y, w, h, u0, v0, u1, v1});              // pixels, origin bottom-left
+hud->commit();
+```
+
+Split screen is just several `add_view()` calls with different viewports and cameras.
+`clear_views()` and `remove_overlay()` take things away again.
+
+What it draws, and the limits for now (all fine for unlit picoCAD-style games):
+
+- Every visible `Actor` that's a **direct child** of the view's world node, with its base mesh.
+  Not nested children, not animated meshes.
+- **Unlit and opaque:** a material's texture and back-face culling are used; lighting, blending
+  and other material settings aren't (on Linux they are, so keep materials unlit to match;
+  the template shows how).
+- Meshes are converted on the Dreamcast the first time they're drawn. Changing a mesh's
+  vertices later doesn't show up there.
+- One renderer at a time.
+
+In CMake: `include($ENV{DC_KIT}/lib/dbcs/dbcs.cmake)` then `dbcs_use(game)` (the template does
+this). On the Dreamcast it also adds GLdc's headers and the link flags its frame hook needs.
+How it works inside is in section 5, "Going around GLdc", and in the comments of
+`renderer_dc.cpp`.
 
 ### Models from picoCAD
 
@@ -328,9 +374,10 @@ doing that:
   optimisation, so calls between GLdc's own functions never reach the linker as symbols and
   `--wrap` can't redirect them. Calls from GLdc into KallistiOS can be.
 - **Open each list type at most once per frame.** If GLdc opens the opaque list after you
-  already did, everything still works, but it cost ~8.5 ms per frame in testing, and
-  KallistiOS only warns about it in debug builds. Draw into GLdc's list when it opens one, and
-  open the lists GLdc skips yourself (it skips all of them if Simulant draws nothing).
+  already did, KallistiOS refuses (returns −1) and prints two warnings to the serial console
+  every frame, which cost ~8.5 ms per frame (see "Measuring": printing is slow). Draw into
+  GLdc's list when it opens one, and open the lists GLdc skips yourself (it skips all of them
+  if Simulant draws nothing).
 - **Textures:** load them through Simulant as usual. GLdc uploads them to video memory, and
   `_glGetBoundTexture()` (a GLdc internal: `sdk/simulant/deps/libgl/GL/private.h`) gives the
   address, size and PowerVR format for a `pvr_poly_cxt_txr()` header. Uploads happen lazily, so
@@ -342,12 +389,18 @@ doing that:
   duplicate vertices first (Simulant's OBJ loader stores every corner separately) and send
   quads as 4-vertex strips.
 
-The kit doesn't ship such a renderer (yet); this is the recipe.
+The kit ships this as a library: `lib/dbcs` (section 4, "The dbcs renderer").
 
 ### Measuring
 
 - `make shot-dc` keeps the Dreamcast's serial output (`printf`, `S_INFO`) in a log next to the
   screenshot. `dc-screenshot.sh dc build/x.png 30` takes it later in the run, with its own log.
+- **Read the log for warnings, especially repeated ones**
+  (`sort build/screenshot-dc.log | uniq -c | sort -rn | head`). KallistiOS reports misuse
+  there (its checks are on in the kit's build) and carries on.
+- **Printing is slow.** The Dreamcast's console output goes over its serial port,
+  synchronously: a ~50-character line took ~4 ms in Flycast. Never print every frame; log
+  every few seconds at most.
 - `timer_us_gettime64()` (KallistiOS, microseconds) times anything; `app->stats` has the frame
   rate and frame time; `app->ram_usage_in_bytes()` the memory use; `pvr_get_stats()` the GPU's
   own timings.

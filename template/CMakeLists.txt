@@ -24,6 +24,11 @@ add_executable(game ${GAME_SOURCES})
 target_include_directories(game PRIVATE ${SIMULANT_SOURCE_DIR})   # for <simulant/simulant.h>
 target_compile_options(game PRIVATE -Wall)
 
+# The kit's renderer (lib/dbcs): one drawing API for both builds; on the Dreamcast it draws
+# straight to the PowerVR. See the kit README, "The dbcs renderer".
+include($ENV{DC_KIT}/lib/dbcs/dbcs.cmake)
+dbcs_use(game)
+
 if(PLATFORM_DREAMCAST)
     # Static engine lib (GLdc + ALdc are compiled into it) + KallistiOS. The group lets the
     # linker resolve the circular references between them. libpthread is a KOS add-on.
