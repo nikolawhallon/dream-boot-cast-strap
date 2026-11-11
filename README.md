@@ -7,7 +7,8 @@ This repository is a **kit** for writing 3D games in C++ with the
 - a **Dreamcast** disc image (`.cdi`), which boots in the Flycast emulator, on an optical
   drive emulator, or from a burned CD-R on real hardware
 
-The kit holds the toolchain, the SDK, the build scripts and a template. Games live in their own
+The kit holds the toolchain, the SDK, the build scripts, a renderer library (`dbcs`, fast on the
+Dreamcast) and a template. Games live in their own
 **project** directories, created from the template, and they all share the kit's SDK.
 
 ```
@@ -57,6 +58,7 @@ exit
 
 Re-running it is harmless, because finished steps are skipped. The SDK lives in `sdk/`
 (git-ignored) and contains absolute paths, so build it after cloning to its final location.
+(Moved it anyway? See section 8, "Moving the kit".)
 
 ### Start a new project
 
@@ -100,12 +102,17 @@ gamepad in its settings (Tab opens the menu).
  your game (sources/*.cpp)
         │  same code, compiled twice
         ▼
+ ┌──────────────────────────── dbcs renderer (lib/dbcs) ───────────────────────────┐
+ │ views (world + camera + viewport + background) · overlays (HUD quads)            │
+ │   Linux: Simulant layers             │   Dreamcast: straight to the PowerVR2 GPU │
+ └──────────────────────────────────────┴───────────────────────────────────────────┘
  ┌──────────────────────────────── Simulant engine ────────────────────────────────┐
  │ Application · Scenes · scene graph · assets · materials · input · audio · UI ... │
  │                                                                                  │
  │   Linux build                        │   Dreamcast build                         │
  │   window/input: SDL2                 │   window/input: KallistiOS (maple bus)    │
- │   rendering: OpenGL (gl1x renderer)  │   rendering: GLdc → PowerVR2 GPU          │
+ │   rendering: OpenGL (gl1x renderer)  │   rendering: GLdc (frame + textures only, │
+ │                                      │     dbcs draws the polygons)              │
  │   audio: OpenAL-soft                 │   audio: ALdc → AICA sound chip           │
  │   libsimulant.so                     │   libsimulant.a (GLdc + ALdc inside)      │
  └──────────────────────────────────────┴───────────────────────────────────────────┘
@@ -147,9 +154,14 @@ written by Simulant's author, and Simulant compiles them straight into `libsimul
 **Simulant (`sdk/simulant`).** The engine you program against. The same API runs on both
 platforms. It has two OpenGL renderers:
 - `gl2x`: shaders, the PC default
-- `gl1x`: fixed function, what the Dreamcast uses
+- `gl1x`: fixed function, what the Dreamcast uses (through GLdc)
 
-**The template forces `gl1x` on PC too** (in `main.cpp`), so the PC shows what the console will show.
+**The template forces `gl1x` on PC too** (in `main.cpp`), so the PC looks like the console.
+
+**dbcs (`lib/dbcs`).** The kit's renderer library, used by the template. Simulant draws through
+GLdc on the Dreamcast, which turned out far too slow for split screen or a few thousand
+triangles, so dbcs draws views and overlays straight to the PowerVR there, and with Simulant on
+Linux. Simulant still does everything else. See section 4, "The dbcs renderer".
 
 **CMake + Make (in each project).** `CMakeLists.txt` describes the game for both targets. The
 Dreamcast build passes Simulant's toolchain file (`sdk/simulant/toolchains/Dreamcast.cmake`), which
@@ -220,6 +232,7 @@ The template's sources are commented and are the best place to start. The concep
   example a 3D world plus a 2D HUD with its own `Camera2D`.
   **Layers are activated together with the scene.** A layer you create later (when a level or
   match starts) stays inactive and draws nothing until you call `layer->activate()`.
+  With the kit's dbcs renderer (below) you don't create layers yourself: it does that on Linux.
 - **Assets**: meshes, materials, textures, sounds, fonts.
   - `assets->...` belongs to the scene and is freed with it. `app->shared_assets->...` lives for the whole program.
   - Load files with `load_texture("assets/x.png")` or `load_mesh("assets/x.obj")`.
@@ -478,6 +491,19 @@ Problems found while setting this up, and how the kit handles them:
     `dc-picocad-obj.sh` (section 4).
 12. **`dc-screenshot.sh` wrote every run's log to the same file**, so a second run silently
     replaced the first one's output. The log now sits next to the screenshot, with the same name.
+
+### Moving the kit
+
+The SDK records where it was built. After moving the kit directory (no full rebuild needed):
+
+```sh
+cd <new location>
+sed -i "s|<old location>|$PWD|g" sdk/kos/environ.sh sdk/kos/environ-debug.sh
+rm -rf sdk/build/simulant-*      # their CMake caches hold the old path; rebuilt on the next make
+```
+
+Then update each project's `shell.nix` (one line, the kit's path) and `make clean` there. The
+cross compiler and KallistiOS's libraries don't care where they live.
 
 ### Updating a component
 
