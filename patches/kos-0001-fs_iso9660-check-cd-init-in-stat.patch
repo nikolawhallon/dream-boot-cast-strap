@@ -1,0 +1,42 @@
+From 983771f07a97276e619e543072ecdb5d73749aad Mon Sep 17 00:00:00 2001
+From: Paul Cercueil <paul@crapouillou.net>
+Date: Wed, 10 Jun 2026 12:17:09 +0200
+Subject: [PATCH] fs_iso9660: Check for CD init in stat() callback
+
+The stat() callback does not take an opened file descriptor as its
+argument, but a filename. Therefore, if fs_stat() is called before
+fs_open(), the code would return an error as the CD-Rom hardware was not
+initialized.
+
+Address this issue by also conditionally initializing the CD-Rom
+hardware from the stat() callback.
+
+Fixes #1413.
+
+Signed-off-by: Paul Cercueil <paul@crapouillou.net>
+---
+ kernel/arch/dreamcast/fs/fs_iso9660.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/kernel/arch/dreamcast/fs/fs_iso9660.c b/kernel/arch/dreamcast/fs/fs_iso9660.c
+index 4d875923..212a5545 100644
+--- a/kernel/arch/dreamcast/fs/fs_iso9660.c
++++ b/kernel/arch/dreamcast/fs/fs_iso9660.c
+@@ -1139,6 +1139,14 @@ static int iso_stat(vfs_handler_t *vfs, const char *path, struct stat *st,
+         return 0;
+     }
+ 
++    /* Do this only when we need to (this is still imperfect) */
++    if(!percd_done && init_percd() < 0) {
++        errno = ENODEV;
++        return -1;
++    }
++
++    percd_done = true;
++
+     /* First try opening as a file */
+     de = find_object_path(path, 0, &root_dirent);
+     md = S_IFREG;
+-- 
+2.54.0
+
