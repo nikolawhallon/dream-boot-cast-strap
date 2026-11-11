@@ -61,7 +61,9 @@ endif()
 # Runtime assets next to the binary (and, for Dreamcast, onto the disc):
 #   build/<target>/assets/            <- this project's assets/
 #   build/<target>/assets/simulant/   <- Simulant's core assets (materials, fonts, ...)
-add_custom_command(TARGET game POST_BUILD
+# This is a target that runs on every build (not a post-link step of `game`), so changing only
+# an asset still reaches the build and the disc.
+add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/assets/simulant
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets ${CMAKE_BINARY_DIR}/assets
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${SIMULANT_SOURCE_DIR}/assets/fonts     ${CMAKE_BINARY_DIR}/assets/simulant/fonts
