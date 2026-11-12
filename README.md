@@ -93,7 +93,7 @@ After that, every project reuses it.
 | `make run-pc`                 | build + run on Linux                                                   |
 | `make run-dc`                 | cross-compile, make `game.cdi`, boot it in Flycast                     |
 | `make pc` / `make dc` / `make cdi` | build only                                                        |
-| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it. Taken 5 s (PC) / 15 s (Dreamcast, incl. ~8 s boot) after launch; `WAIT=30` for later |
+| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it. Taken 5 s (PC) / 15 s (Dreamcast, incl. ~8 s boot) after launch; `WAIT=X` takes it X seconds after launch instead |
 | `make clean`                  | delete `build/`                                                        |
 | `make TYPE=Debug ...`         | debug build: assertions, debug log, symbols (see section 7)            |
 | `make cdi PAD=1`              | padded disc (~700 MB): faster loading on real hardware                 |
