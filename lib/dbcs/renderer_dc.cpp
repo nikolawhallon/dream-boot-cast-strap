@@ -1,5 +1,5 @@
 // dbcs::Renderer on the Dreamcast: draws views and overlays straight to the PowerVR.
-// See renderer.h for the API and the kit README ("Going around GLdc") for the background.
+// See renderer.h for the API and the kit NOTES.md ("How dbcs draws on the Dreamcast").
 #ifdef __DREAMCAST__
 
 #include "renderer.h"
@@ -92,6 +92,8 @@ struct Renderer::Impl {
 
     uint32_t triangles = 0;
     uint32_t draw_us = 0;
+    uint32_t overlay_us = 0;
+    uint32_t overlay_quads = 0;
 
     const Mesh& mesh_for(const MeshPtr& source);
     void gather(StageNode* world);
@@ -350,6 +352,8 @@ void Overlay::commit() {
 
 uint32_t Renderer::triangles() const { return impl_->triangles; }
 uint32_t Renderer::draw_us() const { return impl_->draw_us; }
+uint32_t Renderer::overlay_us() const { return impl_->overlay_us; }
+uint32_t Renderer::overlay_quads() const { return impl_->overlay_quads; }
 
 // --- Mesh conversion (once per mesh) -------------------------------------------------------
 
@@ -609,6 +613,8 @@ void Renderer::Impl::draw_mesh(const Mesh& mesh, const View& view) {
 // --- Per frame: overlays (translucent list) ------------------------------------------------
 
 void Renderer::Impl::draw_overlays() {
+    uint64_t start = timer_us_gettime64();
+    overlay_quads = 0;
     pvr_dr_init(&dr_state);
     // The translucent list is sorted by depth (GLdc leaves autosort on), so draw order comes
     // from z: every quad a little nearer than the one before (1/w: nearer = larger). Floats
@@ -628,7 +634,9 @@ void Renderer::Impl::draw_overlays() {
             submit_vertex({left, bottom, z, q.u0, q.v0}, false);
             submit_vertex({right, bottom, z, q.u1, q.v0}, true);
         }
+        overlay_quads += o.quads().size();
     }
+    overlay_us = uint32_t(timer_us_gettime64() - start);
 }
 
 } // namespace dbcs

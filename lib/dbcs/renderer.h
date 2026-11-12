@@ -8,8 +8,7 @@
 //
 //   Linux:     with Simulant (compositor layers), like any Simulant game
 //   Dreamcast: straight to the PowerVR GPU, bypassing Simulant's renderer and GLdc, which are
-//              far too slow for split screen or a few thousand triangles (see the kit README,
-//              "What things cost")
+//              far too slow for split screen or a few thousand triangles (see the kit NOTES.md)
 //
 // Your game code is the same for both. Simulant still does everything else (window, input,
 // assets, scene graph, main loop).
@@ -99,11 +98,14 @@ public:
     // width / height of a viewport in pixels, for Camera3D::set_perspective_projection()
     float aspect_ratio(const smlt::Viewport& viewport) const;
 
-    // Dreamcast: triangles sent to the GPU and time spent drawing, last frame (0 on Linux)
+    // Dreamcast: triangles sent to the GPU and time spent drawing, last frame (0 on Linux).
+    // draw_us() is the views; overlay_us() the overlays (quads submitted: overlay_quads()).
     uint32_t triangles() const;
     uint32_t draw_us() const;
+    uint32_t overlay_us() const;
+    uint32_t overlay_quads() const;
 
-    struct Impl;   // platform part (renderer_pc.cpp / renderer_dc.cpp)
+    struct Impl;   // platform part (renderer.cpp on Linux, renderer_dc.cpp on Dreamcast)
 
 private:
     smlt::Scene* scene_;

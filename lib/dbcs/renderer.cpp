@@ -212,6 +212,8 @@ void Overlay::commit() {
 
 uint32_t Renderer::triangles() const { return 0; }
 uint32_t Renderer::draw_us() const { return 0; }
+uint32_t Renderer::overlay_us() const { return 0; }
+uint32_t Renderer::overlay_quads() const { return 0; }
 
 } // namespace dbcs
 
