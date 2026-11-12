@@ -6,6 +6,9 @@
 #   dc-screenshot.sh pc [out.png] [seconds]   runs build/linux-<type>/game          (default 5s)
 #   dc-screenshot.sh dc [out.png] [seconds]   boots build/dreamcast-<type>/game.cdi in Flycast (default 15s)
 #
+# The screenshot is taken [seconds] after launch. On the Dreamcast that includes booting
+# (~8 s until main() runs). From a project: make shot-pc / make shot-dc [WAIT=<seconds>].
+#
 # TYPE=debug picks the debug build. The program's output goes to a .log file next to the .png
 # (for dc, that includes the Dreamcast's serial console: printf / Simulant log lines).
 set -euo pipefail

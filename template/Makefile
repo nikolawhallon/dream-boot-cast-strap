@@ -10,6 +10,9 @@ TITLE ?= DreamGame
 TYPE ?= Release
 # 1 = pad the disc's data track: faster loading on real hardware, but a ~700MB image
 PAD ?= 0
+# Screenshots: seconds after launch (empty = the script's default: 5 on PC, 15 on Dreamcast,
+# which includes ~8 s of booting)
+WAIT ?=
 
 type        := $(shell echo $(TYPE) | tr A-Z a-z)
 SIMULANT_PC := $(DC_SDK)/build/simulant-linux-$(type)
@@ -31,9 +34,10 @@ help:
 	@echo "  make run-dc-elf  boot game.elf directly (no disc: /cd/assets won't exist)"
 	@echo "Headless screenshots (no window, software GL):"
 	@echo "  make shot-pc / make shot-dc   -> build/screenshot-{pc,dc}.png (+ .log)"
+	@echo "  make shot-dc WAIT=30          -> the same, 30 s after launch"
 	@echo "Other:"
 	@echo "  make clean       delete build/ (do this after rebuilding KOS or Simulant)"
-	@echo "Options: TYPE=Debug|Release  PAD=0|1  TITLE=..."
+	@echo "Options: TYPE=Debug|Release  PAD=0|1  TITLE=...  WAIT=<seconds>"
 
 check-shell:
 	@if [ -z "$$DC_KIT" ]; then echo "Run 'nix-shell' first." >&2; exit 1; fi
@@ -83,10 +87,10 @@ run-dc-elf: dc
 # ---- Screenshots
 
 shot-pc: pc
-	TYPE=$(type) dc-screenshot.sh pc
+	TYPE=$(type) dc-screenshot.sh pc build/screenshot-pc.png $(WAIT)
 
 shot-dc: cdi
-	TYPE=$(type) dc-screenshot.sh dc
+	TYPE=$(type) dc-screenshot.sh dc build/screenshot-dc.png $(WAIT)
 
 clean:
 	rm -rf build

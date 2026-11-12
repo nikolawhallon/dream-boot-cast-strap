@@ -18,7 +18,6 @@ dream-boot-cast-strap/             THE KIT (this repo, cloned anywhere)
 │   ├── dc-bootstrap.sh            one time: build the Dreamcast SDK into sdk/
 │   ├── dc-build-simulant.sh       build the Simulant engine (Makefiles call it for you)
 │   ├── dc-new-project.sh          create a new project from template/
-│   ├── dc-picocad-obj.sh          prepare a picoCAD model export for Simulant (section 4)
 │   └── dc-screenshot.sh           headless screenshot of a project's game (PC or Dreamcast)
 ├── lib/dbcs/                      the kit's renderer: one drawing API, fast on the Dreamcast (section 4)
 ├── patches/                       fixes applied to KallistiOS by dc-bootstrap.sh
@@ -38,6 +37,13 @@ my-game/                           A PROJECT (anywhere on disk)
 └── build/                         generated
 ```
 
+**About `sdk/`.** Any KallistiOS project needs the SH-4 cross compiler and KallistiOS itself.
+Usually they're installed once per machine, by convention under `/opt/toolchains/dc/`, and
+projects find them through KallistiOS's `environ.sh`. The kit builds them inside
+`dream-boot-cast-strap/sdk/` instead, so nothing is installed system-wide and the setup is
+reproducible. Simulant (`sdk/simulant/`, `sdk/build/simulant-*`) is specific to this kit: much
+Dreamcast homebrew uses KallistiOS directly, or with GLdc.
+
 ---
 
 ## 1. Quick start
@@ -56,8 +62,9 @@ dc-bootstrap.sh           # builds the SH-4 compiler + KallistiOS, 20-40 min
 exit
 ```
 
-Re-running it is harmless, because finished steps are skipped. The SDK lives in `sdk/`
-(git-ignored) and contains absolute paths, so build it after cloning to its final location.
+Re-running it is harmless, because finished steps are skipped. The SDK lives in
+`dream-boot-cast-strap/sdk/` (git-ignored) and contains absolute paths, so build it after
+cloning to its final location.
 (Moved it anyway? See section 8, "Moving the kit".)
 
 ### Start a new project
@@ -86,7 +93,7 @@ After that, every project reuses it.
 | `make run-pc`                 | build + run on Linux                                                   |
 | `make run-dc`                 | cross-compile, make `game.cdi`, boot it in Flycast                     |
 | `make pc` / `make dc` / `make cdi` | build only                                                        |
-| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it |
+| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it. Taken 5 s (PC) / 15 s (Dreamcast, incl. ~8 s boot) after launch; `WAIT=30` for later |
 | `make clean`                  | delete `build/`                                                        |
 | `make TYPE=Debug ...`         | debug build: assertions, debug log, symbols (see section 7)            |
 | `make cdi PAD=1`              | padded disc (~700 MB): faster loading on real hardware                 |
@@ -305,20 +312,21 @@ How it works inside is in section 5, "Going around GLdc", and in the comments of
 
 ### Models from picoCAD
 
-picoCAD's OBJ export needs three fixes before Simulant draws it correctly and quickly.
-`dc-picocad-obj.sh <model.obj> <project>/assets` copies the `.obj`, its `.mtl` and texture, and
-fixes them:
+The template's `assets/warning.obj` (+ `.mtl`, texture) is a picoCAD export, fixed in three ways
+before Simulant draws it correctly and quickly. Do the same to your own picoCAD models:
 
 1. **MTL keys are lowercase** (`map_kd`, `kd`, ...). Simulant's MTL parser is case-sensitive, so
-   the model loads untextured. The script writes `map_Kd`, `Kd`, and so on.
+   the model loads untextured. Write them the standard way: `map_Kd`, `Kd`, `Ka`, `Ks`, `Ns`.
 2. **`tr 1.0`** means "fully transparent" to Simulant, so it turns on alpha blending for every
-   material (slow on the Dreamcast). The script drops the line. (Setting
+   material (slow on the Dreamcast). Delete the line. (Setting
    `MeshLoadOptions::blending_enabled = false` doesn't help: the OBJ loader ignores it.)
 3. **Faces are quads and other polygons.** Simulant's OBJ loader draws each non-triangle face
-   as its own draw call, which is very slow. The script splits every face into triangles.
+   as its own draw call, which is very slow. Split every face into triangles (`f a b c d` becomes
+   `f a b c` and `f a c d`, and so on). Most 3D tools can export triangles; for an existing file:
+   `awk '/^f /{for(i=3;i<NF;i++) print "f",$2,$i,$(i+1); next} {print}' in.obj > out.obj`
 
-The template's `assets/warning.obj` was made this way. Texture coordinates follow the OBJ
-convention (v = 0 at the bottom of the image), which is also what Simulant uses for textures.
+Texture coordinates follow the OBJ convention (v = 0 at the bottom of the image), which is also
+what Simulant uses for textures.
 
 Where to learn more:
 - `sdk/simulant/documentation/`: the engine's guides (start with `getting-started/`, `scene.md`, `stage_nodes.md`).
@@ -487,8 +495,8 @@ Problems found while setting this up, and how the kit handles them:
 10. **Assets were only copied when the code relinked**, so a change to an asset alone never
     reached the build or the disc. The template's `CMakeLists.txt` now copies them in a
     `copy_assets` target that runs on every build.
-11. **picoCAD models** load untextured, alpha-blended and slow without fixes; see
-    `dc-picocad-obj.sh` (section 4).
+11. **picoCAD models** load untextured, alpha-blended and slow without three fixes to the
+    exported files (section 4, "Models from picoCAD").
 12. **`dc-screenshot.sh` wrote every run's log to the same file**, so a second run silently
     replaced the first one's output. The log now sits next to the screenshot, with the same name.
 
@@ -529,7 +537,7 @@ those libraries by itself.
 | PC: things render black | Make sure `force_renderer = "gl1x"` is still set, or give materials a texture. |
 | Changes in KOS/Simulant not picked up | `make clean` |
 | Want to see what the Dreamcast build prints | `make shot-dc`, then read `build/screenshot-dc.log` |
-| A model shows up untextured (white or grey) | Lowercase MTL keys (picoCAD): run it through `dc-picocad-obj.sh`. |
+| A model shows up untextured (white or grey) | Lowercase MTL keys (picoCAD): see section 4, "Models from picoCAD". |
 | A layer draws nothing (screen stays black) | It was created after the scene activated: call `layer->activate()`. |
 | A mesh built in code is invisible | Set every vertex's colour (`vertex_data->color(...)`); for meshes rebuilt in place, also `set_cullable(false)`. |
 | Crash when creating a camera | Use `Camera3D` or `Camera2D`, not `Camera`. |
