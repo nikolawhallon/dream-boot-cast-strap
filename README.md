@@ -129,16 +129,6 @@ hud->commit();
 
 Full API: `lib/dbcs/renderer.h`.
 
-## picoCAD models
-
-picoCAD's OBJ exports need three fixes (the template's `warning.obj` has them):
-
-1. MTL keys in standard case: `map_Kd`, `Kd`, `Ka`, `Ks`, `Ns` (Simulant is case-sensitive;
-   otherwise untextured).
-2. Delete `tr 1.0` (Simulant reads it as transparent, which turns on blending).
-3. Triangulate:
-   `awk '/^f /{for(i=3;i<NF;i++) print "f",$2,$i,$(i+1); next} {print}' in.obj > out.obj`
-
 ## Dreamcast limits
 
 | | |
@@ -161,7 +151,6 @@ not the GPU. See [NOTES.md](NOTES.md) for costs, measuring, networking and the m
 | Dreamcast reboots in a loop / "Unable to find file" | The file isn't in `assets/`. |
 | Dreamcast: solid single-colour screen | KOS built with the wrong float ABI: `KOS_SH4_PRECISION` in `sdk/kos/environ.sh` must be `-m4-single-only`. |
 | PC renders black | Keep `force_renderer = "gl1x"` in `main.cpp`. |
-| Model untextured | picoCAD fixes above. |
 | Mesh built in code invisible | Set vertex colours. |
 | SDK/Simulant changes not picked up | `make clean` |
 | What did the Dreamcast print? | `make shot-dc`, read `build/screenshot-dc.log` |

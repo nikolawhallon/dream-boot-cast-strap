@@ -15,7 +15,7 @@ void GameScene::on_load() {
     // Viewport() = whole screen. Background: one colour, or several for a vertical gradient.
     renderer_->add_view(world, camera, Viewport(), {Color(0.11f, 0.17f, 0.33f, 1.0f)});
 
-    // A picoCAD model (see "picoCAD models" in the kit README). The .mtl names the texture.
+    // The .mtl names the texture.
     MeshLoadOptions options;
     options.cull_mode = CULL_MODE_BACK_FACE;
     auto mesh = assets->load_mesh("warning.obj", VertexSpecification::DEFAULT, options);

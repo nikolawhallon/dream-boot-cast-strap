@@ -15,7 +15,7 @@
 //
 // What gets drawn in a view: every visible Actor that is a DIRECT child of the view's world
 // node, with its mesh. Materials: the texture (or none) and back-face culling; no lighting,
-// no blending. Everything is unlit, like a picoCAD model.
+// no blending. Everything is unlit.
 //
 // Limits (for now):
 //   - only direct children of the world node, only their base mesh, no animation
