@@ -1,623 +1,169 @@
 # dream-boot-cast-strap
 
-This repository is a **kit** for writing 3D games in C++ with the
-[Simulant](https://gitlab.com/simulant/simulant) engine. One codebase builds two ways:
+A kit for making 3D games in C++ with the [Simulant](https://gitlab.com/simulant/simulant)
+engine. One codebase builds:
 
-- a native **Linux** program, for fast iteration
-- a **Dreamcast** disc image (`.cdi`), which boots in the Flycast emulator, on an optical
-  drive emulator, or from a burned CD-R on real hardware
+- a **Linux** program (fast iteration)
+- a **Dreamcast** disc image (`.cdi`) for Flycast, an optical drive emulator, or a CD-R
 
-The kit holds the toolchain, the SDK, the build scripts, a renderer library (`dbcs`, fast on the
-Dreamcast) and a template. Games live in their own
-**project** directories, created from the template, and they all share the kit's SDK.
+The kit holds the toolchain, the SDK, build scripts, a renderer (`dbcs`) and a project
+template. Each game is its own directory and shares the kit's SDK.
 
-```
-dream-boot-cast-strap/             THE KIT (this repo, cloned anywhere)
-├── shell.nix                      dev environment (pinned nixpkgs); projects import it
-├── scripts/
-│   ├── dc-bootstrap.sh            one time: build the Dreamcast SDK into sdk/
-│   ├── dc-build-simulant.sh       build the Simulant engine (Makefiles call it for you)
-│   ├── dc-new-project.sh          create a new project from template/
-│   └── dc-screenshot.sh           headless screenshot of a project's game (PC or Dreamcast)
-├── lib/dbcs/                      the kit's renderer: one drawing API, fast on the Dreamcast (section 4)
-├── patches/                       fixes applied to KallistiOS by dc-bootstrap.sh
-├── template/                      starter project (also runnable in place)
-└── sdk/                           generated, 1-2 GB (more with Debug builds), never edit by hand
-    ├── toolchains/sh-elf/         SH-4 cross compiler (sh-elf-gcc 13.2)
-    ├── kos/                       KallistiOS (Dreamcast OS/SDK) + environ.sh
-    ├── simulant/                  Simulant engine source (pinned), incl. docs and samples
-    └── build/simulant-*/          compiled engine, per target and build type
+More detail (performance numbers, networking, real hardware, kit maintenance): [NOTES.md](NOTES.md).
 
-my-game/                           A PROJECT (anywhere on disk)
-├── shell.nix                      1 line: import <kit>/shell.nix
-├── Makefile                       make run-pc / make run-dc / ...
-├── CMakeLists.txt                 how the game is compiled and linked, per target
-├── sources/                       your C++ code (every .cpp in here is compiled)
-├── assets/                        your models/textures/sounds (copied next to the binary / onto the disc)
-└── build/                         generated
-```
+## Setup (once per machine)
 
-**About `sdk/`.** Any KallistiOS project needs the SH-4 cross compiler and KallistiOS itself.
-Usually they're installed once per machine, by convention under `/opt/toolchains/dc/`, and
-projects find them through KallistiOS's `environ.sh`. The kit builds them inside
-`dream-boot-cast-strap/sdk/` instead, so nothing is installed system-wide and the setup is
-reproducible. Simulant (`sdk/simulant/`, `sdk/build/simulant-*`) is specific to this kit: much
-Dreamcast homebrew uses KallistiOS directly, or with GLdc.
-
----
-
-## 1. Quick start
-
-### Once per machine: build the SDK
-
-Developed and tested on NixOS (x86-64). Nix on another Linux distro should work for building,
-but OpenGL programs from Nix (the game, Flycast) usually need a wrapper like `nixGL` there.
-The build needs about 5 GB of free disk space (about 1-2 GB remain afterwards).
+Needs Nix (tested on NixOS x86-64; other distros need `nixGL` for OpenGL programs) and ~5 GB
+of disk during the build.
 
 ```sh
 git clone https://github.com/nikolawhallon/dream-boot-cast-strap.git
 cd dream-boot-cast-strap
-nix-shell                 # first run downloads packages
-dc-bootstrap.sh           # builds the SH-4 compiler + KallistiOS, 20-40 min
+nix-shell
+dc-bootstrap.sh        # SH-4 compiler + KallistiOS, 20-40 min. Safe to re-run.
 exit
 ```
 
-Re-running it is harmless, because finished steps are skipped. The SDK lives in
-`dream-boot-cast-strap/sdk/` (git-ignored) and contains absolute paths, so build it after
-cloning to its final location.
-(Moved it anyway? See section 8, "Moving the kit".)
+The SDK goes in `sdk/` and stores absolute paths: clone the kit where it will stay.
 
-### Start a new project
+## New game
 
 ```sh
 cd dream-boot-cast-strap && nix-shell
 dc-new-project.sh ../my-game "My Game"
 exit
 
-cd ../my-game
-nix-shell                 # prints "Dreamcast SDK loaded"
-make run-pc               # build + run on Linux
-make run-dc               # build disc image + boot it in Flycast
+cd ../my-game && nix-shell     # prints "Dreamcast SDK loaded"
+make run-pc                    # Linux
+make run-dc                    # Dreamcast, in Flycast
 ```
 
-That's all a new project needs. You get a copy of the template: one textured, unlit 3D model
-(a picoCAD warning post) spinning in front of a camera. Edit `sources/` from there.
+The first build of each type compiles Simulant (a few minutes); later projects reuse it.
+The template shows one textured model spinning. Enter (PC) / Start (Dreamcast) quits.
 
-The first `make run-pc` / `make run-dc` of a given build type compiles Simulant (a few minutes).
-After that, every project reuses it.
+## Commands
 
-### Day to day
+| | |
+|---|---|
+| `make run-pc` | build + run on Linux |
+| `make run-dc` | build disc image + boot it in Flycast |
+| `make pc` / `make dc` / `make cdi` | build only |
+| `make shot-pc` / `make shot-dc` | headless screenshot + log in `build/`. `WAIT=X`: X seconds after launch (default 5 / 15) |
+| `make clean` | delete `build/`. Do this after the SDK or Simulant changes |
+| `TYPE=Debug` | debug build (assertions, debug log, symbols), separate from release |
+| `PAD=1` | padded disc (~700 MB), loads faster on real hardware |
 
-| Command                       | What it does                                                           |
-|-------------------------------|------------------------------------------------------------------------|
-| `make run-pc`                 | build + run on Linux                                                   |
-| `make run-dc`                 | cross-compile, make `game.cdi`, boot it in Flycast                     |
-| `make pc` / `make dc` / `make cdi` | build only                                                        |
-| `make shot-pc` / `make shot-dc` | run without a window, save `build/screenshot-*.png` + a `.log` next to it. Taken 5 s (PC) / 15 s (Dreamcast, incl. ~8 s boot) after launch; `WAIT=X` takes it X seconds after launch instead |
-| `make clean`                  | delete `build/`                                                        |
-| `make TYPE=Debug ...`         | debug build: assertions, debug log, symbols (see section 7)            |
-| `make cdi PAD=1`              | padded disc (~700 MB): faster loading on real hardware                 |
+In Flycast, Tab opens the menu (map keyboard/gamepad there).
 
-In the template, Enter (Linux) or Start (Dreamcast) quits. In Flycast, map your keyboard or
-gamepad in its settings (Tab opens the menu).
-
----
-
-## 2. The big picture
+## A project
 
 ```
- your game (sources/*.cpp)
-        │  same code, compiled twice
-        ▼
- ┌──────────────────────────── dbcs renderer (lib/dbcs) ───────────────────────────┐
- │ views (world + camera + viewport + background) · overlays (HUD quads)            │
- │   Linux: Simulant layers             │   Dreamcast: straight to the PowerVR2 GPU │
- └──────────────────────────────────────┴───────────────────────────────────────────┘
- ┌──────────────────────────────── Simulant engine ────────────────────────────────┐
- │ Application · Scenes · scene graph · assets · materials · input · audio · UI ... │
- │                                                                                  │
- │   Linux build                        │   Dreamcast build                         │
- │   window/input: SDL2                 │   window/input: KallistiOS (maple bus)    │
- │   rendering: OpenGL (gl1x renderer)  │   rendering: GLdc (frame + textures only, │
- │                                      │     dbcs draws the polygons)              │
- │   audio: OpenAL-soft                 │   audio: ALdc → AICA sound chip           │
- │   libsimulant.so                     │   libsimulant.a (GLdc + ALdc inside)      │
- └──────────────────────────────────────┴───────────────────────────────────────────┘
-        │                                         │
-   g++ (nixpkgs), x86-64 Linux              KallistiOS v2.2.1 (+ newlib C library)
-                                            sh-elf-gcc 13.2 → Hitachi SH-4 machine code
-                                                  │
-                                            game.elf ─(mkdcdisc)→ game.cdi ─→ Flycast / real DC
+my-game/
+├── sources/            your code; every .cpp/.c is compiled
+│   ├── main.cpp        AppConfig (title, resolution, search paths), registers scenes
+│   └── game_scene.*    the game
+├── assets/             loaded by relative name; copied next to the binary and onto the disc
+├── Makefile            TITLE = disc name
+├── CMakeLists.txt      only edit to add libraries or flags
+└── shell.nix           imports the kit's shell
 ```
 
-### The pieces, bottom-up
+On the Dreamcast, `assets/` is at `/cd/assets`. Assets are copied on every build.
 
-**Nix (`shell.nix`).** One reproducible environment with every host tool: CMake, Ninja,
-SDL2, OpenAL, Flycast, mkdcdisc, and the libraries needed to build the cross compiler. nixpkgs is
-pinned to one commit, so the shell is the same every time. Entering the shell also:
-- sets `DC_KIT` (the kit dir) and `DC_SDK` (`$DC_KIT/sdk`)
-- puts `scripts/` on `PATH`
-- sources KallistiOS's `environ.sh`, once it exists. That's what "Dreamcast SDK loaded" means.
+## Simulant essentials
 
-**The cross compiler (`sdk/toolchains/sh-elf`).** The Dreamcast CPU is a 200 MHz Hitachi
-SH-4. Your PC's gcc can't produce code for it, so the kit builds GCC 13.2 + binutils + newlib
-targeting `sh-elf`. KallistiOS's own `dc-chain` scripts do this (called from `dc-bootstrap.sh`).
-It's not packaged in nixpkgs, which is why it's a one-time script step rather than a Nix package.
+- **`Application`**: one per program. Register scenes in `init()`; `"main"` starts first.
+  `scenes->activate("name")` switches.
+- **`Scene`**: one screen (menu, level). Hooks: `on_load()`, `on_activate()`,
+  `on_update(dt)`, `on_fixed_update(step)`, `on_unload()`. It's also the root node.
+- **Nodes**: `create_child<Actor>(mesh)`, `Camera3D`, `Camera2D`, lights... Each has a
+  `transform` (`set_position`, `set_orientation`, `look_at`). Use `Camera3D`/`Camera2D`,
+  never `Camera` (crashes).
+- **Assets**: `assets->load_mesh("x.obj")`, `load_texture("x.png")` (scene lifetime);
+  `app->shared_assets` lives for the whole program. OBJ, glTF, MD2, PNG, JPG, TGA...
+- **Meshes in code**: set every vertex's colour (`vertex_data->color(...)`), the default is
+  transparent black.
+- **Materials**: `assets->clone_default_material()`, then `set_base_color_map(tex)`,
+  `set_lighting_enabled(false)`, `set_blend_func(BLEND_NONE)`.
+- **Input**: `input->axis_value("Horizontal")` (-1..1), `axis_was_pressed("Fire1")`. Built-in
+  axes: `Horizontal`, `Vertical`, `Fire1`, `Fire2`, `Start`. Per controller:
+  `new_axis(...)` + `set_joystick_source(GameControllerIndex(n))`. Stick up is +1 on Dreamcast,
+  −1 on PC.
+- **Logging**: `S_INFO("x = {0}", x)`, `S_WARN`, `S_ERROR`. On Dreamcast it goes to serial,
+  which is slow: never log every frame.
+- **Platform code**: `#ifdef __DREAMCAST__`.
 
-**KallistiOS (`sdk/kos`), "KOS".** The standard open-source Dreamcast SDK, and effectively the
-console's operating system. It's linked into your program and provides:
-- threads
-- a filesystem: `/cd` is the disc, `/pc` is a host link, `/rd` is a ramdisk
-- drivers for the controller ports (maple bus), video modes, the PowerVR2 GPU, sound and the modem/BBA
-- libc glue
+Reference: `sdk/simulant/simulant/*.h` (the API; `simulant.h` includes all),
+`sdk/simulant/samples/`, `sdk/simulant/documentation/` (partly outdated; headers win).
 
-KOS is configured entirely with environment variables (`KOS_BASE`, `KOS_CC_BASE`, ...), which
-`sdk/kos/environ.sh` sets.
+## Drawing: dbcs
 
-**GLdc and ALdc.** The Dreamcast has no OpenGL. **GLdc** implements OpenGL 1.x (fixed function,
-no shaders) on top of the PowerVR2. **ALdc** implements OpenAL on the AICA sound chip. Both are
-written by Simulant's author, and Simulant compiles them straight into `libsimulant.a`.
-
-**Simulant (`sdk/simulant`).** The engine you program against. The same API runs on both
-platforms. It has two OpenGL renderers:
-- `gl2x`: shaders, the PC default
-- `gl1x`: fixed function, what the Dreamcast uses (through GLdc)
-
-**The template forces `gl1x` on PC too** (in `main.cpp`), so the PC looks like the console.
-
-**dbcs (`lib/dbcs`).** The kit's renderer library, used by the template. Simulant draws through
-GLdc on the Dreamcast, which turned out far too slow for split screen or a few thousand
-triangles, so dbcs draws views and overlays straight to the PowerVR there, and with Simulant on
-Linux. Simulant still does everything else. See section 4, "The dbcs renderer".
-
-**CMake + Make (in each project).** `CMakeLists.txt` describes the game for both targets. The
-Dreamcast build passes Simulant's toolchain file (`sdk/simulant/toolchains/Dreamcast.cmake`), which
-switches the compiler to `sh-elf-g++`, sets SH-4 flags and defines `PLATFORM_DREAMCAST`. The
-`Makefile` is a thin wrapper that runs CMake with the right options per target, and builds
-Simulant first if it's missing.
-
-**The disc image (`mkdcdisc`).** A Dreamcast boots a disc like this:
-1. The BIOS reads the boot sector `IP.BIN` (title, region, the license screen).
-2. It loads `1ST_READ.BIN`, your program. On the disc this file is *scrambled*, which is a
-   Dreamcast quirk for CD-Rs.
-
-`mkdcdisc` does all of it in one command: it converts `game.elf`, scrambles it, generates
-`IP.BIN`, adds `build/<target>/assets/` as `/assets`, and writes a self-booting `.cdi`.
-On the console that folder becomes `/cd/assets`, which is one of the game's search paths.
-
-**Flycast.** The emulator. Its built-in "reios" replaces the Dreamcast BIOS, so no BIOS dump
-is needed. `make run-dc` passes it the `.cdi`. `make shot-dc` also enables its serial console,
-so the game's `printf` and log output end up in `build/screenshot-dc.log`.
-
-### What happens on `make run-dc`
-
-1. If needed, `dc-build-simulant.sh dreamcast Release` builds `sdk/build/simulant-dreamcast-release/simulant/libsimulant.a`.
-2. CMake (with `Dreamcast.cmake`) compiles `sources/*.cpp` with `sh-elf-g++`, links `libsimulant.a` + KOS
-   into `build/dreamcast-release/game.elf`, and copies `assets/` + Simulant's core assets to
-   `build/dreamcast-release/assets/`.
-3. `mkdcdisc` writes `build/dreamcast-release/game.cdi`.
-4. Flycast boots it: reios → `1ST_READ.BIN` → KOS starts → `main()` → Simulant → your scene.
-
-`make run-pc` does the same with the native compiler and `libsimulant.so`, and runs `build/linux-release/game`.
-
----
-
-## 3. A project, file by file
-
-| File | Purpose | Edit it? |
-|---|---|---|
-| `sources/main.cpp` | `main()`: `AppConfig` (title, resolution, renderer, search paths), the `Application` subclass that registers scenes | Rarely: new scenes, config |
-| `sources/game_scene.{h,cpp}` | The template's scene: one `dbcs::Renderer` view, loads `warning.obj`, spins it | Yes, this is the game |
-| `assets/` | Your files (the template has `warning.obj/.mtl` + `warning_tex.png`). Load them by relative name | Yes |
-| `CMakeLists.txt` | Compile/link rules for both targets. Every `.cpp`/`.c` under `sources/` is included automatically; `dbcs_use(game)` adds the kit's renderer | Only to add libraries/flags |
-| `Makefile` | `make` targets, `TITLE` (disc name) | Change `TITLE` |
-| `shell.nix` | Imports the kit's shell | No |
-
-Rebuilding after adding a source file needs nothing special, because the file glob is
-re-checked on every build. Assets are copied on every build too, so changing only an asset still
-reaches the build and the disc.
-
----
-
-## 4. Simulant crash course
-
-The template's sources are commented and are the best place to start. The concepts:
-
-- **`Application`**: one per program. Owns the window, main loop, input, audio and the scene
-  manager. You subclass it and register scenes in `init()`. The `"main"` scene starts first.
-  Switch scenes with `scenes->activate("name")`.
-- **`Scene`**: one screen of the game (menu, level...). It's also the **root of a scene graph**.
-  Lifecycle hooks are `on_load()` (build things), `on_activate()`/`on_deactivate()`,
-  `on_update(dt)` (every frame), `on_fixed_update(step)` (fixed rate, for physics) and `on_unload()`.
-- **Nodes**: everything in the world, made with `create_child<T>(...)`: `Actor` (shows a mesh),
-  `Camera3D`/`Camera2D`, `DirectionalLight`/`PointLight`, `Skybox`, UI widgets, physics bodies...
-  Each has a `transform` (position/orientation/scale; `look_at()`), and nodes can be parented.
-  `Params().set("key", value)` passes construction arguments.
-  Cameras must be `Camera3D` or `Camera2D`: `create_child<Camera>()` crashes.
-- **Layers**: nothing is drawn until you call `compositor->create_layer(subtree, camera)`:
-  "draw this subtree, from this camera, into this viewport". Several layers can stack, for
-  example a 3D world plus a 2D HUD with its own `Camera2D`.
-  **Layers are activated together with the scene.** A layer you create later (when a level or
-  match starts) stays inactive and draws nothing until you call `layer->activate()`.
-  With the kit's dbcs renderer (below) you don't create layers yourself: it does that on Linux.
-- **Assets**: meshes, materials, textures, sounds, fonts.
-  - `assets->...` belongs to the scene and is freed with it. `app->shared_assets->...` lives for the whole program.
-  - Load files with `load_texture("assets/x.png")` or `load_mesh("assets/x.obj")`.
-    Loaders exist for OBJ, glTF, MD2, Q2 BSP, PNG, JPG, TGA, PCX and more.
-  - Build geometry in code with `mesh->create_submesh_as_box/cube/sphere/...`, or vertex by
-    vertex (`vertex_data->position(...)`, `tex_coord0(...)`, `color(...)`, `move_next()`, then
-    `done()`). Set the colour of every vertex: the default vertex format has a colour that
-    multiplies the texture, and it starts as black with zero alpha (invisible).
-  - A mesh you rebuild in place keeps its old bounding box, so its actor can be culled away by
-    mistake. For things that are always on screen (a HUD), use `actor->set_cullable(false)`.
-- **Materials**: how a surface looks. Start with `assets->clone_default_material()`, then
-  `set_base_color`, `set_base_color_map(texture)`, `set_lighting_enabled`, `set_blend_func`...
-  Loaded models come with their own materials (`for(auto& sm: mesh->each_submesh())
-  sm->material()->...`, as in the template).
-- **Input**: named axes that combine keyboard, mouse and controllers.
-  - Built-in axes: `"Horizontal"`, `"Vertical"`, `"Fire1"`, `"Fire2"`, `"Start"`, `"MouseX"`, `"MouseY"`.
-  - Read them with `input->axis_value("Horizontal")` (-1..1) or `axis_was_pressed("Fire1")`.
-  - Define your own with `input->new_axis(...)`; `set_joystick_source(GameControllerIndex(n))`
-    binds an axis to one controller (for multiplayer).
-  - Stick Y: on the Dreamcast, Simulant reports "up" as +1 (its KOS backend flips the axis);
-    on PC through SDL, "up" is −1. (Read from the engine's code; not yet checked on hardware.)
-- **Logging**: `S_INFO("x = {0}", x)`, `S_DEBUG`, `S_WARN`, `S_ERROR`. On Dreamcast, log lines
-  and `printf` go to the serial console.
-- **Per-platform code**: `#ifdef __DREAMCAST__`, or at runtime `get_platform()->name() == "dreamcast"`.
-
-### The dbcs renderer
-
-`lib/dbcs` is the kit's own renderer, used by the template. You describe what's on screen and
-it draws it, with the same game code for both builds:
-
-- **Linux:** with Simulant's compositor layers, like any Simulant game.
-- **Dreamcast:** straight to the PowerVR, bypassing Simulant's renderer and GLdc. It's several
-  times faster: a 4-player split-screen game went from 4–11 fps through Simulant to ~50 fps
-  (see section 5).
+`lib/dbcs` draws your scene. Same code on both builds; on Linux it uses Simulant, on the
+Dreamcast it goes straight to the PowerVR (Simulant's own path is several times slower).
+Don't create Simulant layers yourself.
 
 ```cpp
 #include "dbcs/renderer.h"
 
-// in on_load():
-renderer_.reset(new dbcs::Renderer(this));          // one per scene, kept for its lifetime
-auto world = create_child<Stage>();                  // Actors directly under it get drawn
-camera->set_perspective_projection(Degrees(60), renderer_->aspect_ratio(viewport), 0.5f, 100.0f);
-renderer_->add_view(world, camera, viewport, {Color::black()});   // background: 1 colour, or
-                                                                   // several for a gradient
-// a HUD: textured quads over a viewport, alpha-blended, on top of everything
-dbcs::Overlay* hud = renderer_->add_overlay(viewport, atlas_texture);
+// on_load():
+renderer_.reset(new dbcs::Renderer(this));      // one per scene, keep it
+auto world = create_child<Stage>();              // Actors directly under it are drawn
+auto camera = create_child<Camera3D>();
+camera->set_perspective_projection(Degrees(60), renderer_->aspect_ratio(Viewport()), 0.5f, 100.0f);
+renderer_->add_view(world, camera, Viewport(), {Color::black()});   // 2+ colours = gradient
+
+// 2D: textured quads over a viewport, alpha-blended, on top of the views
+dbcs::Overlay* hud = renderer_->add_overlay(Viewport(), atlas_texture, /*order*/ 1);
 hud->clear();
-hud->add({x, y, w, h, u0, v0, u1, v1});              // pixels, origin bottom-left
+hud->add({x, y, w, h, u0, v0, u1, v1});          // pixels, origin bottom-left
 hud->commit();
 ```
 
-Split screen is just several `add_view()` calls with different viewports and cameras.
-`clear_views()` and `remove_overlay()` take things away again.
+- Split screen: one `add_view()` per viewport.
+- Overlays draw by `order`, and quads in order within an overlay. Enough for a whole 2D game
+  (tile map, sprites, text from a font baked into an atlas). Rebuilding a few thousand quads per
+  frame is fine.
+- Limits: only **direct** children of the world node; unlit, opaque; no animation; mesh
+  changes after the first draw don't show on Dreamcast. Keep materials unlit and opaque so
+  Linux matches.
 
-Overlays are enough for a whole 2D game (a tile map, sprites, text):
+Full API: `lib/dbcs/renderer.h`.
 
-- `add_overlay(viewport, texture, order)`: overlays draw by increasing `order` (ties: in the
-  order they were added), and inside an overlay each quad draws over the ones before it. So a
-  map overlay at order 0, the HUD at 1 and a menu at 2 stack the way you'd expect.
-- `set_overlay_texture(overlay, texture)` swaps an overlay's texture, e.g. for palette swaps
-  (bake one atlas per palette and swap).
-- Rebuilding an overlay every frame is fine: a few thousand quads cost a few milliseconds on
-  the Dreamcast.
+## picoCAD models
 
-What it draws, and the limits for now (all fine for unlit picoCAD-style games):
+picoCAD's OBJ exports need three fixes (the template's `warning.obj` has them):
 
-- Every visible `Actor` that's a **direct child** of the view's world node, with its base mesh.
-  Not nested children, not animated meshes.
-- **Unlit and opaque:** a material's texture and back-face culling are used; lighting, blending
-  and other material settings aren't (on Linux they are, so keep materials unlit to match;
-  the template shows how).
-- Meshes are converted on the Dreamcast the first time they're drawn. Changing a mesh's
-  vertices later doesn't show up there.
-- One renderer at a time.
-
-In CMake: `include($ENV{DC_KIT}/lib/dbcs/dbcs.cmake)` then `dbcs_use(game)` (the template does
-this). On the Dreamcast it also adds GLdc's headers and the link flags its frame hook needs.
-How it works inside is in section 5, "Going around GLdc", and in the comments of
-`renderer_dc.cpp`.
-
-### Models from picoCAD
-
-The template's `assets/warning.obj` (+ `.mtl`, texture) is a picoCAD export, fixed in three ways
-before Simulant draws it correctly and quickly. Do the same to your own picoCAD models:
-
-1. **MTL keys are lowercase** (`map_kd`, `kd`, ...). Simulant's MTL parser is case-sensitive, so
-   the model loads untextured. Write them the standard way: `map_Kd`, `Kd`, `Ka`, `Ks`, `Ns`.
-2. **`tr 1.0`** means "fully transparent" to Simulant, so it turns on alpha blending for every
-   material (slow on the Dreamcast). Delete the line. (Setting
-   `MeshLoadOptions::blending_enabled = false` doesn't help: the OBJ loader ignores it.)
-3. **Faces are quads and other polygons.** Simulant's OBJ loader draws each non-triangle face
-   as its own draw call, which is very slow. Split every face into triangles (`f a b c d` becomes
-   `f a b c` and `f a c d`, and so on). Most 3D tools can export triangles; for an existing file:
+1. MTL keys in standard case: `map_Kd`, `Kd`, `Ka`, `Ks`, `Ns` (Simulant is case-sensitive;
+   otherwise untextured).
+2. Delete `tr 1.0` (Simulant reads it as transparent, which turns on blending).
+3. Triangulate:
    `awk '/^f /{for(i=3;i<NF;i++) print "f",$2,$i,$(i+1); next} {print}' in.obj > out.obj`
 
-Texture coordinates follow the OBJ convention (v = 0 at the bottom of the image), which is also
-what Simulant uses for textures.
+## Dreamcast limits
 
-Where to learn more:
-- `sdk/simulant/documentation/`: the engine's guides (start with `getting-started/`, `scene.md`, `stage_nodes.md`).
-  Some pages describe older or newer APIs; when in doubt, the headers win.
-- `sdk/simulant/samples/*.cpp`: small complete programs (physics boxes, animated models, UI widgets, viewports, a cave scene).
-- `sdk/simulant/simulant/*.h`: the API itself. `simulant.h` includes everything.
-
----
-
-## 5. Designing for the Dreamcast
-
-Develop on PC, but **check the Dreamcast build often**, because the console is far weaker:
-
-| | Dreamcast | Consequences |
-|---|---|---|
-| CPU | SH-4 at 200 MHz, fast single-precision FPU | Use `float` everywhere. `double` is emulated in software and very slow. Avoid heavy per-frame allocation. |
-| RAM | 16 MB main (your program + data), 8 MB video, 2 MB sound | The whole `.elf` is loaded into RAM. Watch texture sizes. |
-| GPU | PowerVR2, fixed function, no shaders, per-vertex lighting | Small power-of-two textures (≤256×256 is a good default). Keep polygons modest in size: huge ones clip badly and light poorly. The GPU itself handles millions of polygons per second; the CPU work around them is the limit (see below). |
-| Video | 640×480 | The template uses the same resolution on PC. |
-| Input | Controller: analog stick, d-pad, A/B/X/Y, analog L/R triggers, Start | Design for it. The keyboard is the PC stand-in. |
-| Disc | CD read speed | Load assets in `on_load()`, not mid-game. |
-
-Fixed-function lighting is computed differently by desktop GL and GLdc, so the two builds can
-differ a bit in brightness. **The Dreamcast build is the reference.**
-
-### What things cost
-
-Measured in Flycast while porting a 4-player split-screen game to this kit (relative numbers
-are reliable; absolute ones still need checking on real hardware):
-
-| Thing | Cost per frame |
+| | |
 |---|---|
-| An empty layer | ~0.02 ms |
-| Simulant, per draw call (each actor/submesh, in each layer it's drawn in) | ~35 µs |
-| Simulant UI widgets (labels, images) | several draw calls each: four HUDs of ~44 widgets took ~30 ms |
-| GLdc, per triangle | ~2.2 µs (≈ 450 CPU cycles) |
-| One view of ~6,200 textured triangles through Simulant + GLdc | ~19 ms |
-| KallistiOS's bare PowerVR benchmark (`kos/examples/dreamcast/pvr/pvrmark_strips_direct`) | 3.6M+ polygons/s |
-| A hand-written PowerVR renderer (transform, clip, cull, submit; see below) | ~94 cycles per vertex (~2M vertices/s) |
+| CPU | SH-4 200 MHz. Use `float`; `double` is emulated. Avoid per-frame allocation. |
+| RAM | 16 MB (the whole `.elf` + data), 8 MB video, 2 MB sound |
+| GPU | No shaders. Power-of-two textures, ≤256×256. Split large surfaces into tiles. |
+| Screen | 640×480 (PC uses the same) |
+| Disc | Slow. Load in `on_load()`. |
 
-What that means in practice:
+The Dreamcast build is the reference: test it often. CPU work per triangle is the usual limit,
+not the GPU. See [NOTES.md](NOTES.md) for costs, measuring, networking and the microphone.
 
-- **Draw calls are expensive.** Merge small things into one mesh. A HUD built from many UI
-  widgets can cost more than the whole 3D world; build it as one mesh of quads from one
-  texture atlas instead (text included, with the font baked into the atlas).
-- **Split screen multiplies everything:** every view draws its whole scene again.
-- **GLdc is fine for modest scenes** (a few thousand triangles at 60 fps). Beyond that, the
-  per-triangle cost dominates.
-- **The GPU is rarely the limit.** The PowerVR draws screen-space triangles (texturing, depth,
-  blending) in hardware, but it does no vertex transformation. Projection, clipping and culling
-  run on the SH-4, and that's where the time goes.
-
-### Going around GLdc for the heavy part
-
-For scenes too big for GLdc, a game can draw its 3D world straight to the PowerVR through
-KallistiOS's `pvr_*` API and keep Simulant for everything else (input, assets, scene graph,
-main loop). Simulant still calls GLdc's `glKosSwapBuffers()` every frame, and GLdc still opens
-and closes the PowerVR frame there; the game adds its polygons to that frame. What we learned
-doing that:
-
-- **Hook in with the linker.** Link with `-Wl,--wrap=pvr_scene_begin -Wl,--wrap=pvr_list_begin
-  -Wl,--wrap=pvr_scene_finish`: GLdc's calls to those KallistiOS functions then go to your
-  `__wrap_pvr_list_begin()` etc., which call the originals (`__real_...`) and draw your polygons
-  into the list that's open.
-- **Wrap KallistiOS functions, not GLdc's.** Simulant (GLdc included) is built with link-time
-  optimisation, so calls between GLdc's own functions never reach the linker as symbols and
-  `--wrap` can't redirect them. Calls from GLdc into KallistiOS can be.
-- **Open each list type at most once per frame.** If GLdc opens the opaque list after you
-  already did, KallistiOS refuses (returns −1) and prints two warnings to the serial console
-  every frame, which cost ~8.5 ms per frame (see "Measuring": printing is slow). Draw into
-  GLdc's list when it opens one, and open the lists GLdc skips yourself (it skips all of them
-  if Simulant draws nothing).
-- **Textures:** load them through Simulant as usual. GLdc uploads them to video memory, and
-  `_glGetBoundTexture()` (a GLdc internal: `sdk/simulant/deps/libgl/GL/private.h`) gives the
-  address, size and PowerVR format for a `pvr_poly_cxt_txr()` header. Uploads happen lazily, so
-  build headers on first draw, not right after loading.
-- **Per triangle:** transform with the SH-4's matrix instruction (`mat_load`/`mat_apply`, then
-  `mat_trans_nodiv`), reject what's outside the view, clip only what crosses the near plane or a
-  view's edge (that also keeps split-screen views apart), cull back faces on the CPU, and write
-  vertices through the store queues (`pvr_dr_init`, `pvr_dr_target`, `pvr_dr_commit`). Merge
-  duplicate vertices first (Simulant's OBJ loader stores every corner separately) and send
-  quads as 4-vertex strips.
-
-The kit ships this as a library: `lib/dbcs` (section 4, "The dbcs renderer").
-
-### Measuring
-
-- `make shot-dc` keeps the Dreamcast's serial output (`printf`, `S_INFO`) in a log next to the
-  screenshot. `dc-screenshot.sh dc build/x.png 30` takes it later in the run, with its own log.
-- **Read the log for warnings, especially repeated ones**
-  (`sort build/screenshot-dc.log | uniq -c | sort -rn | head`). KallistiOS reports misuse
-  there (its checks are on in the kit's build) and carries on.
-- **Printing is slow.** The Dreamcast's console output goes over its serial port,
-  synchronously: a ~50-character line took ~4 ms in Flycast. Never print every frame; log
-  every few seconds at most.
-- `timer_us_gettime64()` (KallistiOS, microseconds) times anything; `app->stats` has the frame
-  rate and frame time; `app->ram_usage_in_bytes()` the memory use; `pvr_get_stats()` the GPU's
-  own timings.
-- To see where a frame goes, wrap the KallistiOS functions GLdc calls during its swap
-  (`pvr_wait_ready`, `pvr_scene_begin`, `pvr_list_begin`/`pvr_list_finish`,
-  `pvr_scene_finish`) with `--wrap`, timestamp each, and compare with a timestamp from your
-  scene's `on_update()`. That splits a frame into Simulant's work, waiting for the GPU, drawing,
-  and GLdc's lists.
-- A debug mode that starts the game with bots (no controller needed) lets headless runs
-  measure real gameplay. Make sure the bots play like people (e.g. "fire" is a press, not held).
-
----
-
-### Networking and the microphone
-
-KallistiOS has a TCP/IP stack with BSD sockets, drivers for the Broadband Adapter (BBA) and the
-LAN Adapter, and a driver for the Dreamcast Microphone. Both work in Flycast. Dream Wars (a
-voice-controlled RTS) uses all of it. What to know:
-
-- **Turn networking on**: KOS only starts it if you ask. In `main.cpp`:
-  ```cpp
-  #ifdef __DREAMCAST__
-  #include <kos/init.h>
-  KOS_INIT_FLAGS(INIT_DEFAULT | INIT_NET);   // finds the adapter, gets an address by DHCP
-  #endif
-  ```
-  Then use ordinary `socket()`/`connect()`/`send()`/`recv()` (and `std::thread`: KOS has
-  pthreads).
-- **No TLS.** HTTPS/WSS servers are out of reach directly. Talk plain HTTP/WebSocket to a relay
-  that adds TLS, e.g. one `socat TCP-LISTEN:8441,fork,reuseaddr OPENSSL:example.com:443` per
-  service, and send the real host name in the `Host:` header.
-- **KOS's TCP needed fixes** to stream both ways (section 8, items 14 and 15). They're in
-  the kit's patches. A Dreamcast program that opens two connections to the same server port,
-  or downloads more than a few KB, needs them.
-- **`select()`/`poll()` return early on KOS**: a socket counts as ready when it's merely
-  writable. Check `FD_ISSET` on the read set, and sleep a little when nothing is readable.
-  Otherwise a network thread spins and starves the game thread, or blocks in `recv()` and
-  stops sending.
-- **Don't block in `send()`** on a long upload: use `MSG_DONTWAIT` and keep reading between
-  sends. A thread stuck in `send()` never sees the server hang up.
-- **Flycast's BBA**: `-config network:EmulateBBA=yes -config network:DCNet=no`. With
-  `DCNet=no` the Dreamcast is 192.168.169.2 and its TCP connections leave through the host's
-  sockets, so it can reach machines on your LAN. Use the host's LAN address, not 127.0.0.1:
-  KOS treats 127/8 as its own loopback. (The default, DCNet, tunnels to Flycast's internet
-  service instead, which can't see your LAN.) The kit builds Flycast from master for its
-  networking fixes (section 8).
-- **The microphone** (`dc/maple/sip.h`): `maple_enum_type(0, MAPLE_FUNC_MICROPHONE)`, then
-  `sip_set_frequency(dev, SIP_SAMPLE_11KHZ)`, `sip_set_sample_type(dev,
-  SIP_SAMPLE_16BIT_SIGNED)` and `sip_start_sampling(dev, callback, 1)`. The callback runs in
-  the maple driver's context: copy the samples into a ring buffer and return. In Flycast, put
-  a microphone in a controller slot with `-config input:device1.1=2`. It records from the
-  host's capture device through SDL. For automated tests, SDL's disk driver
-  (`SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILEIN=speech.raw`, raw s16 mono at 44100 Hz) feeds it a
-  file. `SDL_DISKAUDIOFILE=out.raw` records what the game plays (44100 Hz stereo).
-- **Streaming sound out** (`dc/sound/stream.h`): `snd_stream_init()`, `snd_stream_alloc()`,
-  `snd_stream_start(hnd, rate, 0)` and `snd_stream_poll()` every frame. It coexists with
-  Simulant's audio (ALdc): both share KOS's sound driver, which is only loaded once. The
-  callback is asked for *bytes*, despite the parameter's name.
-
-## 6. Running on real hardware
-
-- **Optical drive emulator** (GDEMU, MODE, ...): copy `game.cdi` to the SD card. Build it with `make cdi PAD=1`.
-- **CD-R**: burn `game.cdi` (padded) with a tool that handles DiscJuggler images. This only boots on
-  Dreamcasts that support MIL-CD (consoles made before roughly late 2000).
-- **Broadband adapter or coder's cable**: `dc-tool-ip` / `dc-tool-serial` can upload `game.elf` directly.
-  They aren't included in the kit yet.
-
----
-
-## 7. Debug builds
-
-`make run-pc TYPE=Debug`, `make run-dc TYPE=Debug` and so on are separate builds, in
-`build/*-debug` plus their own Simulant build. Debug builds:
-- enable assertions and the engine's debug log
-- keep symbols. On Dreamcast they're split into `game.elf.debug`, because the `.elf` must fit in RAM.
-
-They're slower, especially on the Dreamcast.
-
----
-
-## 8. Under the hood: versions, patches, decisions
-
-Pinned versions:
-
-| Component | Version | Pinned in |
-|---|---|---|
-| nixpkgs | `6fcc1603…` (26.05) | `shell.nix` |
-| Flycast | master `222c9530` (2026-11-08), for its networking fixes | `shell.nix` (nixpkgs' 2.7 package, newer source) |
-| mkdcdisc | `d158f773` (2026-11-08) | `shell.nix` (built as a Nix package) |
-| KallistiOS | v2.2.1 (`b125c930`), the version Simulant's own Dreamcast Docker image uses, + `patches/` | `scripts/dc-bootstrap.sh` |
-| sh-elf toolchain | GCC 13.2.0, binutils 2.43, newlib 4.3.0 (KOS "stable" profile) | KOS `dc-chain` |
-| Simulant | `4a5f5799` (main, 2026-06-17) | `scripts/dc-build-simulant.sh` |
-
-Problems found while setting this up, and how the kit handles them:
-
-1. **KOS `stat()` on CD before any `open()` fails.** Simulant looks up every asset with `stat()`,
-   so it found no assets on the disc and kept rebooting. `patches/kos-0001-*` backports the
-   upstream fix (KOS commit `983771f0`).
-2. **Floating-point ABI mismatch.** KOS 2.2 defaults to `-m4-single`, but Simulant compiles with
-   `-m4-single-only`. These modes pass `float` arguments in different registers, so every float
-   handed from GLdc to KOS was scrambled. The symptom was a solid garbled-color screen with no
-   geometry. `dc-bootstrap.sh` builds KOS with `-m4-single-only` (`KOS_PRECISION`).
-3. **The PC renderer drew everything black.** Simulant's `gl2x` PBR shader ignores
-   `set_base_color` when there's no texture. Fixed by forcing `gl1x` in `main.cpp`.
-4. **C++ runtime mismatch.** nixpkgs' OpenAL is built with GCC 15, so the native build uses the
-   default GCC (15). GCC 13 (`DC_HOST_CC`) is used only to compile the cross compiler, whose
-   GCC 13.2 sources build more reliably with it.
-5. **NixOS has no `/bin/bash`.** `dc-chain` hardcodes it, so the bootstrap passes `SHELL=` to make.
-6. **Simulant's `make install` is broken** (it references a missing file). Projects link the build
-   tree directly (`SIMULANT_SOURCE_DIR` / `SIMULANT_BUILD_DIR` in CMake).
-7. **KOS 2.2 moved pthreads into an add-on library.** `CMakeLists.txt` links `pthread`
-   explicitly, inside a `--start-group`/`--end-group`.
-8. **Use `.cdi`, not `.gdi`, with Flycast's reios.** With `.gdi`, KOS mounts the small placeholder
-   track and can't see the game files.
-9. **Big polygons on the Dreamcast.** A single 60×60 floor box rendered badly. Build large
-   surfaces from tiles (e.g. a 10×10 grid).
-10. **Assets were only copied when the code relinked**, so a change to an asset alone never
-    reached the build or the disc. The template's `CMakeLists.txt` now copies them in a
-    `copy_assets` target that runs on every build.
-11. **picoCAD models** load untextured, alpha-blended and slow without three fixes to the
-    exported files (section 4, "Models from picoCAD").
-12. **`dc-screenshot.sh` wrote every run's log to the same file**, so a second run silently
-    replaced the first one's output. The log now sits next to the screenshot, with the same name.
-13. **Flycast 2.7's emulated BBA hung under sustained two-way traffic** (microphone audio up,
-    speech down). Upstream has several BBA fixes since the release (`c0fb036d` stalled uploads
-    in the picoTCP proxy, `38a3d83c` frame handover races, `5543a95c` polling), and master
-    works, so `shell.nix` builds Flycast from master. The first `nix-shell` after this
-    compiles it, which takes a few minutes. Go back to nixpkgs' package once a release has
-    the fixes.
-14. **Every KOS TCP connection used local port 1024.** The "first free port" search compared a
-    network-order port with a host-order one, so it never found a clash (and leaked a lock when
-    it did). Two connections to the same server port were the same connection as far as the
-    other end could tell: one of them died within a second. `patches/kos-0002-*` backports the
-    upstream fix (`ff7f07d2`).
-15. **KOS TCP corrupted and throttled downloads.** Out-of-order segments (after any dropped
-    frame, which is common on the emulated BBA) were appended as if in order, corrupting the
-    stream. And reading never told the sender the window had reopened, so downloads crawled at
-    a few KB/s. `patches/kos-0003-*` backports upstream's reassembly (`5cbfe5fd`, `f4c0b536`)
-    and adds window updates on read (the idea of upstream's `d7f97230`).
-
-### Moving the kit
-
-The SDK records where it was built. After moving the kit directory (no full rebuild needed):
-
-```sh
-cd <new location>
-sed -i "s|<old location>|$PWD|g" sdk/kos/environ.sh sdk/kos/environ-debug.sh
-rm -rf sdk/build/simulant-*      # their CMake caches hold the old path; rebuilt on the next make
-```
-
-Then update each project's `shell.nix` (one line, the kit's path) and `make clean` there. The
-cross compiler and KallistiOS's libraries don't care where they live.
-
-### Updating a component
-
-- **Simulant**: change `SIMULANT_REV` in `scripts/dc-build-simulant.sh`, delete `sdk/build/simulant-*`, then `make clean` in your projects.
-- **KallistiOS**: change `KOS_REV` in `scripts/dc-bootstrap.sh`, delete `sdk/.done/sources sdk/.done/patches* sdk/.done/kos-*`, then re-run `dc-bootstrap.sh`.
-  Check whether the patches are still needed (upstream may already include them), and whether the
-  toolchain profile changed. If it did, also delete `sdk/.done/toolchain`.
-- **nixpkgs**: change `nixpkgsRev`, then update the hash. Get it with `nix-prefetch-url --unpack <tarball url>`.
-
-- **KOS patches**: add or edit a file in `patches/` and re-run `dc-bootstrap.sh`. The patch step
-  is keyed to the patches' contents, so it notices: it resets `sdk/kos` to `KOS_REV`, applies every
-  patch and rebuilds KOS (a few minutes).
-
-After rebuilding KOS or Simulant, run `make clean` in projects. CMake doesn't notice changes to
-those libraries by itself.
-
----
-
-## 9. Troubleshooting
+## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | "Run 'nix-shell' first" | Enter the project's `nix-shell`. |
-| "Dreamcast SDK not built/loaded" | Run `dc-bootstrap.sh` in the kit's shell, then leave and re-enter `nix-shell`. |
-| Dreamcast: "Unable to find file" or the game reboots in a loop | The asset isn't on the disc (is it in `assets/`?), or KOS was rebuilt without `patches/`. |
-| Dreamcast: solid single-color screen | Floating-point ABI mismatch (section 8, item 2). Check `KOS_SH4_PRECISION` in `sdk/kos/environ.sh`. |
-| PC: things render black | Make sure `force_renderer = "gl1x"` is still set, or give materials a texture. |
-| Changes in KOS/Simulant not picked up | `make clean` |
-| Want to see what the Dreamcast build prints | `make shot-dc`, then read `build/screenshot-dc.log` |
-| A model shows up untextured (white or grey) | Lowercase MTL keys (picoCAD): see section 4, "Models from picoCAD". |
-| A layer draws nothing (screen stays black) | It was created after the scene activated: call `layer->activate()`. |
-| A mesh built in code is invisible | Set every vertex's colour (`vertex_data->color(...)`); for meshes rebuilt in place, also `set_cullable(false)`. |
-| Crash when creating a camera | Use `Camera3D` or `Camera2D`, not `Camera`. |
-| Dreamcast: slow with many objects or split screen | Section 5, "What things cost": fewer draw calls, triangulated models, one-mesh HUDs. |
-| Linker errors about `pthread_*` or KOS symbols | Keep the link group in `CMakeLists.txt` intact. |
-
-Start over completely: delete `sdk/`, then run `dc-bootstrap.sh` again. That takes 20-40 minutes plus the Simulant builds.
+| "Dreamcast SDK not built/loaded" | `dc-bootstrap.sh` in the kit's shell, then re-enter `nix-shell`. |
+| Dreamcast reboots in a loop / "Unable to find file" | The file isn't in `assets/`. |
+| Dreamcast: solid single-colour screen | KOS built with the wrong float ABI: `KOS_SH4_PRECISION` in `sdk/kos/environ.sh` must be `-m4-single-only`. |
+| PC renders black | Keep `force_renderer = "gl1x"` in `main.cpp`. |
+| Model untextured | picoCAD fixes above. |
+| Mesh built in code invisible | Set vertex colours. |
+| SDK/Simulant changes not picked up | `make clean` |
+| What did the Dreamcast print? | `make shot-dc`, read `build/screenshot-dc.log` |
+| Slow on Dreamcast | Fewer actors/submeshes, triangulated models, one overlay per HUD. |
+| Start over | Delete `sdk/`, run `dc-bootstrap.sh`. |

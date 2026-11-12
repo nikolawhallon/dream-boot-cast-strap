@@ -25,7 +25,7 @@ target_include_directories(game PRIVATE ${SIMULANT_SOURCE_DIR})   # for <simulan
 target_compile_options(game PRIVATE -Wall)
 
 # The kit's renderer (lib/dbcs): one drawing API for both builds; on the Dreamcast it draws
-# straight to the PowerVR. See the kit README, "The dbcs renderer".
+# straight to the PowerVR. See the kit README, "Drawing: dbcs".
 include($ENV{DC_KIT}/lib/dbcs/dbcs.cmake)
 dbcs_use(game)
 

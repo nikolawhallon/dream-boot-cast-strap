@@ -10,8 +10,7 @@ TITLE ?= DreamGame
 TYPE ?= Release
 # 1 = pad the disc's data track: faster loading on real hardware, but a ~700MB image
 PAD ?= 0
-# Screenshots: seconds after launch (empty = the script's default: 5 on PC, 15 on Dreamcast,
-# which includes ~8 s of booting)
+# Screenshots: seconds after launch (default 5 on PC, 15 on Dreamcast incl. ~8 s boot)
 WAIT ?=
 
 type        := $(shell echo $(TYPE) | tr A-Z a-z)
@@ -21,7 +20,7 @@ BUILD_PC    := build/linux-$(type)
 BUILD_DC    := build/dreamcast-$(type)
 DISC_FLAGS  := $(if $(filter 1,$(PAD)),,--disable-data-track-padding)
 
-.PHONY: help check-shell check-dc pc run-pc dc cdi run-dc run-dc-elf shot-pc shot-dc clean
+.PHONY: help check-shell check-dc pc run-pc dc cdi run-dc shot-pc shot-dc clean
 
 help:
 	@echo "Linux:"
@@ -31,7 +30,6 @@ help:
 	@echo "  make dc          cross-compile         -> $(BUILD_DC)/game.elf"
 	@echo "  make cdi         bootable disc image   -> $(BUILD_DC)/game.cdi"
 	@echo "  make run-dc      build disc + boot it in Flycast"
-	@echo "  make run-dc-elf  boot game.elf directly (no disc: /cd/assets won't exist)"
 	@echo "Headless screenshots (no window, software GL):"
 	@echo "  make shot-pc / make shot-dc   -> build/screenshot-{pc,dc}.png (+ .log)"
 	@echo "  make shot-dc WAIT=X           -> the same, X seconds after launch"
@@ -80,9 +78,6 @@ cdi: dc
 
 run-dc: cdi
 	flycast $(BUILD_DC)/game.cdi
-
-run-dc-elf: dc
-	flycast $(BUILD_DC)/game.elf
 
 # ---- Screenshots
 
