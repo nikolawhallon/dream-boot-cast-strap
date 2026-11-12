@@ -45,18 +45,18 @@ if ! step sources; then
 fi
 
 # ---------------------------------------------------------------- 2. KOS patches
-# Fixes backported from newer KOS (see patches/). Applying them forces a KOS rebuild.
-if ! step patches; then
+# Fixes backported from newer KOS (see patches/). The step is keyed to the patches' contents,
+# so adding or changing a patch re-runs it on the next bootstrap: the KOS tree is reset to
+# KOS_REV, every patch applied, and KOS rebuilt.
+PATCHES_ID="patches-$(cat "$KIT"/patches/kos-*.patch | sha1sum | cut -c1-12)"
+if ! step "$PATCHES_ID"; then
+  git -C "$SDK/kos" checkout -q -- .
   for p in "$KIT"/patches/kos-*.patch; do
-    if git -C "$SDK/kos" apply --reverse --check "$p" 2>/dev/null; then
-      echo "already applied: $(basename "$p")"
-    else
-      log "Applying $(basename "$p")"
-      git -C "$SDK/kos" apply "$p"
-    fi
+    log "Applying $(basename "$p")"
+    git -C "$SDK/kos" apply "$p"
   done
-  rm -f "$DONE"/kos-*
-  mark patches
+  rm -f "$DONE"/kos-* "$DONE"/patches*
+  mark "$PATCHES_ID"
 fi
 
 # ---------------------------------------------------------------- 3. environ.sh

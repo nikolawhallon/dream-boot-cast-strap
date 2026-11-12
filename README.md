@@ -294,6 +294,16 @@ hud->commit();
 Split screen is just several `add_view()` calls with different viewports and cameras.
 `clear_views()` and `remove_overlay()` take things away again.
 
+Overlays are enough for a whole 2D game (a tile map, sprites, text):
+
+- `add_overlay(viewport, texture, order)`: overlays draw by increasing `order` (ties: in the
+  order they were added), and inside an overlay each quad draws over the ones before it. So a
+  map overlay at order 0, the HUD at 1 and a menu at 2 stack the way you'd expect.
+- `set_overlay_texture(overlay, texture)` swaps an overlay's texture, e.g. for palette swaps
+  (bake one atlas per palette and swap).
+- Rebuilding an overlay every frame is fine: a few thousand quads cost a few milliseconds on
+  the Dreamcast.
+
 What it draws, and the limits for now (all fine for unlit picoCAD-style games):
 
 - Every visible `Actor` that's a **direct child** of the view's world node, with its base mesh.
@@ -435,6 +445,52 @@ The kit ships this as a library: `lib/dbcs` (section 4, "The dbcs renderer").
 
 ---
 
+### Networking and the microphone
+
+KallistiOS has a TCP/IP stack with BSD sockets, drivers for the Broadband Adapter (BBA) and the
+LAN Adapter, and a driver for the Dreamcast Microphone. Both work in Flycast. Dream Wars (a
+voice-controlled RTS) uses all of it. What to know:
+
+- **Turn networking on**: KOS only starts it if you ask. In `main.cpp`:
+  ```cpp
+  #ifdef __DREAMCAST__
+  #include <kos/init.h>
+  KOS_INIT_FLAGS(INIT_DEFAULT | INIT_NET);   // finds the adapter, gets an address by DHCP
+  #endif
+  ```
+  Then use ordinary `socket()`/`connect()`/`send()`/`recv()` (and `std::thread`: KOS has
+  pthreads).
+- **No TLS.** HTTPS/WSS servers are out of reach directly. Talk plain HTTP/WebSocket to a relay
+  that adds TLS, e.g. one `socat TCP-LISTEN:8441,fork,reuseaddr OPENSSL:example.com:443` per
+  service, and send the real host name in the `Host:` header.
+- **KOS's TCP needed fixes** to stream both ways (section 8, items 14 and 15). They're in
+  the kit's patches. A Dreamcast program that opens two connections to the same server port,
+  or downloads more than a few KB, needs them.
+- **`select()`/`poll()` return early on KOS**: a socket counts as ready when it's merely
+  writable. Check `FD_ISSET` on the read set, and sleep a little when nothing is readable.
+  Otherwise a network thread spins and starves the game thread, or blocks in `recv()` and
+  stops sending.
+- **Don't block in `send()`** on a long upload: use `MSG_DONTWAIT` and keep reading between
+  sends. A thread stuck in `send()` never sees the server hang up.
+- **Flycast's BBA**: `-config network:EmulateBBA=yes -config network:DCNet=no`. With
+  `DCNet=no` the Dreamcast is 192.168.169.2 and its TCP connections leave through the host's
+  sockets, so it can reach machines on your LAN. Use the host's LAN address, not 127.0.0.1:
+  KOS treats 127/8 as its own loopback. (The default, DCNet, tunnels to Flycast's internet
+  service instead, which can't see your LAN.) The kit builds Flycast from master for its
+  networking fixes (section 8).
+- **The microphone** (`dc/maple/sip.h`): `maple_enum_type(0, MAPLE_FUNC_MICROPHONE)`, then
+  `sip_set_frequency(dev, SIP_SAMPLE_11KHZ)`, `sip_set_sample_type(dev,
+  SIP_SAMPLE_16BIT_SIGNED)` and `sip_start_sampling(dev, callback, 1)`. The callback runs in
+  the maple driver's context: copy the samples into a ring buffer and return. In Flycast, put
+  a microphone in a controller slot with `-config input:device1.1=2`. It records from the
+  host's capture device through SDL. For automated tests, SDL's disk driver
+  (`SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILEIN=speech.raw`, raw s16 mono at 44100 Hz) feeds it a
+  file. `SDL_DISKAUDIOFILE=out.raw` records what the game plays (44100 Hz stereo).
+- **Streaming sound out** (`dc/sound/stream.h`): `snd_stream_init()`, `snd_stream_alloc()`,
+  `snd_stream_start(hnd, rate, 0)` and `snd_stream_poll()` every frame. It coexists with
+  Simulant's audio (ALdc): both share KOS's sound driver, which is only loaded once. The
+  callback is asked for *bytes*, despite the parameter's name.
+
 ## 6. Running on real hardware
 
 - **Optical drive emulator** (GDEMU, MODE, ...): copy `game.cdi` to the SD card. Build it with `make cdi PAD=1`.
@@ -463,9 +519,9 @@ Pinned versions:
 | Component | Version | Pinned in |
 |---|---|---|
 | nixpkgs | `6fcc1603…` (26.05) | `shell.nix` |
-| Flycast | 2.7 | via nixpkgs |
+| Flycast | master `222c9530` (2026-11-08), for its networking fixes | `shell.nix` (nixpkgs' 2.7 package, newer source) |
 | mkdcdisc | `d158f773` (2026-11-08) | `shell.nix` (built as a Nix package) |
-| KallistiOS | v2.2.1 (`b125c930`), the version Simulant's own Dreamcast Docker image uses | `scripts/dc-bootstrap.sh` |
+| KallistiOS | v2.2.1 (`b125c930`), the version Simulant's own Dreamcast Docker image uses, + `patches/` | `scripts/dc-bootstrap.sh` |
 | sh-elf toolchain | GCC 13.2.0, binutils 2.43, newlib 4.3.0 (KOS "stable" profile) | KOS `dc-chain` |
 | Simulant | `4a5f5799` (main, 2026-06-17) | `scripts/dc-build-simulant.sh` |
 
@@ -499,6 +555,22 @@ Problems found while setting this up, and how the kit handles them:
     exported files (section 4, "Models from picoCAD").
 12. **`dc-screenshot.sh` wrote every run's log to the same file**, so a second run silently
     replaced the first one's output. The log now sits next to the screenshot, with the same name.
+13. **Flycast 2.7's emulated BBA hung under sustained two-way traffic** (microphone audio up,
+    speech down). Upstream has several BBA fixes since the release (`c0fb036d` stalled uploads
+    in the picoTCP proxy, `38a3d83c` frame handover races, `5543a95c` polling), and master
+    works, so `shell.nix` builds Flycast from master. The first `nix-shell` after this
+    compiles it, which takes a few minutes. Go back to nixpkgs' package once a release has
+    the fixes.
+14. **Every KOS TCP connection used local port 1024.** The "first free port" search compared a
+    network-order port with a host-order one, so it never found a clash (and leaked a lock when
+    it did). Two connections to the same server port were the same connection as far as the
+    other end could tell: one of them died within a second. `patches/kos-0002-*` backports the
+    upstream fix (`ff7f07d2`).
+15. **KOS TCP corrupted and throttled downloads.** Out-of-order segments (after any dropped
+    frame, which is common on the emulated BBA) were appended as if in order, corrupting the
+    stream. And reading never told the sender the window had reopened, so downloads crawled at
+    a few KB/s. `patches/kos-0003-*` backports upstream's reassembly (`5cbfe5fd`, `f4c0b536`)
+    and adds window updates on read (the idea of upstream's `d7f97230`).
 
 ### Moving the kit
 
@@ -516,10 +588,14 @@ cross compiler and KallistiOS's libraries don't care where they live.
 ### Updating a component
 
 - **Simulant**: change `SIMULANT_REV` in `scripts/dc-build-simulant.sh`, delete `sdk/build/simulant-*`, then `make clean` in your projects.
-- **KallistiOS**: change `KOS_REV` in `scripts/dc-bootstrap.sh`, delete `sdk/.done/sources sdk/.done/patches sdk/.done/kos-*`, then re-run `dc-bootstrap.sh`.
+- **KallistiOS**: change `KOS_REV` in `scripts/dc-bootstrap.sh`, delete `sdk/.done/sources sdk/.done/patches* sdk/.done/kos-*`, then re-run `dc-bootstrap.sh`.
   Check whether the patches are still needed (upstream may already include them), and whether the
   toolchain profile changed. If it did, also delete `sdk/.done/toolchain`.
 - **nixpkgs**: change `nixpkgsRev`, then update the hash. Get it with `nix-prefetch-url --unpack <tarball url>`.
+
+- **KOS patches**: add or edit a file in `patches/` and re-run `dc-bootstrap.sh`. The patch step
+  is keyed to the patches' contents, so it notices: it resets `sdk/kos` to `KOS_REV`, applies every
+  patch and rebuilds KOS (a few minutes).
 
 After rebuilding KOS or Simulant, run `make clean` in projects. CMake doesn't notice changes to
 those libraries by itself.

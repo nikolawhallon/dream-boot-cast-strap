@@ -31,9 +31,10 @@ void Renderer::add_view(StageNode* world, Camera3D* camera, const Viewport& view
                       background.empty() ? std::vector<Color>{Color::black()} : background);
 }
 
-Overlay* Renderer::add_overlay(const Viewport& viewport, TexturePtr texture) {
+Overlay* Renderer::add_overlay(const Viewport& viewport, TexturePtr texture, int order) {
     overlays_.emplace_back(new Overlay());
     Overlay* o = overlays_.back().get();
+    o->order_ = order;
     pixels(viewport, o->x_, o->y_, o->w_, o->h_);
     platform_add_overlay(o, viewport, texture);
     return o;
@@ -45,6 +46,10 @@ void Renderer::remove_overlay(Overlay* overlay) {
     if(it == overlays_.end()) return;
     platform_remove_overlay(overlay);
     overlays_.erase(it);
+}
+
+void Renderer::set_overlay_texture(Overlay* overlay, TexturePtr texture) {
+    platform_set_overlay_texture(overlay, texture);
 }
 
 } // namespace dbcs
@@ -159,7 +164,8 @@ void Renderer::platform_add_overlay(Overlay* o, const Viewport& viewport, Textur
     p.root = scene_->create_child<Stage>();
     p.camera = scene_->create_child<Camera2D>();
     p.camera->set_orthographic_projection(0, o->w_, 0, o->h_, -1, 1);
-    p.layer = new_layer(scene_, p.root, p.camera, viewport, 100, 0);
+    // Layers of equal priority draw in creation order, which is what `order` promises
+    p.layer = new_layer(scene_, p.root, p.camera, viewport, 100 + o->order_, 0);
 
     p.mesh = scene_->assets->create_mesh(VertexSpecification::DEFAULT);
     p.submesh = p.mesh->create_submesh("overlay", unlit(scene_, texture, true), INDEX_TYPE_16_BIT);
@@ -172,6 +178,10 @@ void Renderer::platform_remove_overlay(Overlay* o) {
     p.layer->destroy();
     p.root->destroy();
     p.camera->destroy();
+}
+
+void Renderer::platform_set_overlay_texture(Overlay* o, TexturePtr texture) {
+    o->impl_->submesh->material()->set_base_color_map(texture);
 }
 
 void Overlay::commit() {

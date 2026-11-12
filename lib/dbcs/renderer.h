@@ -65,6 +65,7 @@ private:
     struct Impl;
     std::vector<Quad> quads_;
     float x_ = 0, y_ = 0, w_ = 0, h_ = 0;  // viewport in screen pixels, origin top-left
+    int order_ = 0;
     std::shared_ptr<Impl> impl_;           // platform data
 };
 
@@ -87,9 +88,13 @@ public:
     void clear_views();
 
     // An overlay over `viewport`, drawn on top of all views, alpha-blended.
+    // Overlays are drawn by increasing `order` (equal orders: in the order they were added),
+    // and within an overlay, each quad over the ones before it -- so a 2D game can layer
+    // map, sprites, labels and HUD with overlays alone.
     // The renderer owns it; it stays valid until remove_overlay() or the renderer goes away.
-    Overlay* add_overlay(const smlt::Viewport& viewport, smlt::TexturePtr texture);
+    Overlay* add_overlay(const smlt::Viewport& viewport, smlt::TexturePtr texture, int order = 0);
     void remove_overlay(Overlay* overlay);
+    void set_overlay_texture(Overlay* overlay, smlt::TexturePtr texture);
 
     // width / height of a viewport in pixels, for Camera3D::set_perspective_projection()
     float aspect_ratio(const smlt::Viewport& viewport) const;
@@ -110,6 +115,7 @@ private:
                            const smlt::Viewport& viewport, const std::vector<smlt::Color>& background);
     void platform_add_overlay(Overlay* overlay, const smlt::Viewport& viewport, smlt::TexturePtr texture);
     void platform_remove_overlay(Overlay* overlay);
+    void platform_set_overlay_texture(Overlay* overlay, smlt::TexturePtr texture);
 };
 
 } // namespace dbcs

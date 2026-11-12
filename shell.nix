@@ -27,6 +27,22 @@ let
   # bootstrapped with host GCC 13, which builds those older sources more reliably.
   hostCC13 = pkgs.gcc13;
 
+  # Flycast from upstream master: with v2.7, sustained two-way traffic over the emulated
+  # Broadband Adapter (streaming microphone audio up, speech down) hung the emulated network.
+  # Master has several BBA fixes since the release -- c0fb036d (stalled uploads in the picoTCP
+  # proxy), 38a3d83c (frame handover races), 5543a95c (polling) -- and works. Go back to plain
+  # pkgs.flycast once a release includes them.
+  flycast = pkgs.flycast.overrideAttrs (old: {
+    version = "2.7-unstable-2026-11-08";
+    src = pkgs.fetchFromGitHub {
+      owner = "flyinghead";
+      repo = "flycast";
+      rev = "222c9530da7552fc1a95f33acfb4848856fafa28";
+      hash = "sha256-i6/stZ2ZyqThCtq7SgNoq+ArQaDGaIwIGeBa/1Bnq3k=";
+      fetchSubmodules = true;
+    };
+  });
+
   # ELF -> self-booting Dreamcast disc image (.cdi/.gdi), by the Simulant authors.
   mkdcdisc = pkgs.stdenv.mkDerivation {
     pname = "mkdcdisc";
@@ -81,7 +97,7 @@ pkgs.mkShell {
 
     # Disc image builder + emulator
     mkdcdisc
-    flycast
+    flycast   # upstream master, see above
 
     # Headless screenshots (dc-screenshot.sh)
     xvfb-run

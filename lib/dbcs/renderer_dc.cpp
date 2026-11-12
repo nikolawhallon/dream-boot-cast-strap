@@ -4,6 +4,7 @@
 
 #include "renderer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -109,8 +110,9 @@ namespace {
 constexpr uint16_t NO_INDEX = 0xffff;
 pvr_dr_state_t dr_state;
 
-// A PowerVR polygon header for a Simulant texture (untextured if null or not uploaded yet)
-void compile_header(uint8_t* out, pvr_list_t list, const TexturePtr& texture) {
+// A PowerVR polygon header for a Simulant texture (untextured if null or not uploaded yet).
+// Returns false if the texture exists but isn't uploaded yet: compile again next frame.
+bool compile_header(uint8_t* out, pvr_list_t list, const TexturePtr& texture) {
     pvr_poly_cxt_t cxt;
     GldcTexture* tex = nullptr;
     if(texture) {
@@ -132,6 +134,7 @@ void compile_header(uint8_t* out, pvr_list_t list, const TexturePtr& texture) {
         cxt.depth.write = PVR_DEPTHWRITE_DISABLE;
     }
     pvr_poly_compile((pvr_poly_hdr_t*) out, &cxt);
+    return !texture || (tex && tex->data);
 }
 
 struct ClipVertex {            // clip space, with texture coordinates
@@ -321,7 +324,17 @@ void Renderer::platform_add_overlay(Overlay* o, const Viewport&, TexturePtr text
     Impl::OverlayEntry entry;
     entry.overlay = o;
     entry.texture = texture;
-    impl_->overlays.push_back(entry);
+    // Keep the list sorted by order; equal orders stay in the order they were added
+    auto& list = impl_->overlays;
+    auto at = std::upper_bound(list.begin(), list.end(), o->order_,
+                               [](int order, const Impl::OverlayEntry& e) { return order < e.overlay->order_; });
+    list.insert(at, entry);
+}
+
+void Renderer::platform_set_overlay_texture(Overlay* o, TexturePtr texture) {
+    for(auto& e: impl_->overlays) {
+        if(e.overlay == o) { e.texture = texture; e.compiled = false; }
+    }
 }
 
 void Renderer::platform_remove_overlay(Overlay* o) {
@@ -597,21 +610,23 @@ void Renderer::Impl::draw_mesh(const Mesh& mesh, const View& view) {
 
 void Renderer::Impl::draw_overlays() {
     pvr_dr_init(&dr_state);
+    // The translucent list is sorted by depth (GLdc leaves autosort on), so draw order comes
+    // from z: every quad a little nearer than the one before (1/w: nearer = larger). Floats
+    // near 1 have ~1e-7 steps, so 1e-5 apart stays distinct for many thousands of quads.
+    float z = 1.0f;
     for(OverlayEntry& e: overlays) {
-        if(!e.compiled) {
-            compile_header(e.header, PVR_LIST_TR_POLY, e.texture);
-            e.compiled = true;
-        }
+        if(!e.compiled) e.compiled = compile_header(e.header, PVR_LIST_TR_POLY, e.texture);
         submit_header(e.header);
         const Overlay& o = *e.overlay;
         for(const Quad& q: o.quads()) {
             // Overlay pixels are y-up from the viewport's bottom; the screen is y-down
             float left = o.screen_x() + q.x, right = left + q.w;
             float top = o.screen_y() + o.height() - (q.y + q.h), bottom = top + q.h;
-            submit_vertex({left, top, 1.0f, q.u0, q.v1}, false);
-            submit_vertex({right, top, 1.0f, q.u1, q.v1}, false);
-            submit_vertex({left, bottom, 1.0f, q.u0, q.v0}, false);
-            submit_vertex({right, bottom, 1.0f, q.u1, q.v0}, true);
+            z += 1e-5f;
+            submit_vertex({left, top, z, q.u0, q.v1}, false);
+            submit_vertex({right, top, z, q.u1, q.v1}, false);
+            submit_vertex({left, bottom, z, q.u0, q.v0}, false);
+            submit_vertex({right, bottom, z, q.u1, q.v0}, true);
         }
     }
 }
